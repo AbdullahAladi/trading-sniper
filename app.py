@@ -9,7 +9,7 @@ from datetime import datetime, time as dt_time
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. الإعدادات الأساسية والأمنية ---
-st.set_page_config(page_title="منصة القناص الاحترافية V4.0", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="منصة الفرص الاحترافية V4.0", layout="wide", page_icon="🚀")
 
 # ضع بياناتك هنا أو ادخلها عبر الواجهة
 TELEGRAM_TOKEN = st.sidebar.text_input("Telegram Bot Token", type="password")
@@ -78,7 +78,7 @@ def run_market_radar():
                 action = "شراء 🚀"
                 # إرسال تنبيه تليجرام (مرة واحدة فقط)
                 if ticker not in st.session_state.sent_alerts:
-                    msg = f"🎯 *إشارة قنص!*\nالسهم: #{ticker}\nالسعر: ${price:.2f}\nالهدف التقريبي: ${price + volatility:.2f}\nالوقف: ${stop_loss:.2f}"
+                    msg = f"🎯 *إشارة فرصة!*\nالسهم: #{ticker}\nالسعر: ${price:.2f}\nالهدف التقريبي: ${price + volatility:.2f}\nالوقف: ${stop_loss:.2f}"
                     send_telegram_msg(msg)
                     st.session_state.sent_alerts.add(ticker)
             elif rsi > 70:
@@ -137,4 +137,5 @@ else:
 
 if st.sidebar.button("تصفير الذاكرة والتنبيهات"):
     st.session_state.sent_alerts = set()
+
     st.rerun()
