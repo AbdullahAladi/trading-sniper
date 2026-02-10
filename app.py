@@ -5,48 +5,54 @@ import numpy as np
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. الهوية البصرية وتكبير الخطوط (CSS Pro) ---
-st.set_page_config(page_title="منصة الفرص الذكية", layout="wide")
+# --- 1. تصميم غرفة العمليات (CSS Pro) ---
+st.set_page_config(page_title="منصة الفرص الذكية - Pro", layout="wide")
 
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@400;700&display=swap');
     
-    /* تكبير الخط العام وتغيير الخلفية */
-    .stApp { 
-        background-color: #0e1117; 
-        font-family: 'Inter', sans-serif; 
-        color: #f0f0f0; 
+    .stApp { background-color: #050505; color: #f0f0f0; font-family: 'Inter', sans-serif; }
+    
+    /* العناوين بنمط سيبراني */
+    h1 { 
+        font-family: 'Orbitron', sans-serif; 
+        font-size: 3.5rem !important; 
+        color: #00ffcc !important; 
+        text-align: center; 
+        text-shadow: 0 0 15px #00ffcc;
     }
 
-    /* تكبير عناوين الصفحة */
-    h1 { font-size: 3rem !important; color: #00ffcc !important; text-align: center; margin-bottom: 30px; }
-    h3 { font-size: 1.8rem !important; color: #00ffcc !important; }
-
-    /* تكبير نصوص الجدول (Dataframe) */
-    [data-testid="stTable"] { font-size: 1.5rem !important; }
-    .stDataFrame div { font-size: 1.3rem !important; }
+    /* تكبير نصوص الجداول */
+    .stDataFrame div { font-size: 1.6rem !important; }
     
-    /* تحسين مظهر الخلايا */
-    .styled-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 1.4rem;
+    /* تنسيق خاص للقطاعات والقوة */
+    .sector-box {
+        padding: 15px;
+        border-radius: 10px;
+        background: #1e1e1e;
+        border-left: 5px solid #00ffcc;
+        margin-bottom: 20px;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. محرك الحسابات والترتيب بالأفضلية ---
-st_autorefresh(interval=60 * 1000, key="v8_refresh")
+# --- 2. المحرك الذكي (الزخم + القطاعات + الاحتمالات) ---
+st_autorefresh(interval=60 * 1000, key="v9_refresh")
 
-def get_ranked_data():
+def run_smart_engine():
     try:
-        df = pd.read_csv('nasdaq_screener_1770731394680.csv')
-        # تصفية أفضل 40 سهم من حيث السيولة
-        watchlist = df.sort_values(by='Volume', ascending=False).head(40)
+        df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
+        
+        # 1. تحليل قوة القطاعات (Sector Strength)
+        sector_summary = df_raw.groupby('Sector')['Net Change'].mean().sort_values(ascending=False)
+        top_sector = sector_summary.index[0] if not sector_summary.empty else "N/A"
+        
+        # اختيار الأسهم القيادية
+        watchlist = df_raw.sort_values(by='Volume', ascending=False).head(40)
         symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
         
-        data = yf.download(symbols, period="7d", interval="60m", group_by='ticker', progress=False)
+        data = yf.download(symbols, period="5d", interval="60m", group_by='ticker', progress=False)
         
         results = []
         for ticker in symbols:
@@ -56,65 +62,70 @@ def get_ranked_data():
             price = df_t['Close'].iloc[-1]
             change = ((price - df_t['Close'].iloc[-2]) / df_t['Close'].iloc[-2]) * 100
             
-            # حساب RSI لتحويله لنسبة دخول
+            # --- الميزة 1: مؤشر زخم الصياد (Hunter’s Momentum) ---
+            # يدمج السعر مع حجم التداول النسبي والتسارع
+            vol_ratio = df_t['Volume'].iloc[-1] / df_t['Volume'].mean() # حجم التداول الحالي مقارنة بالمتوسط
+            
+            # حساب RSI (كأساس)
             delta = df_t['Close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
             rsi = 100 - (100 / (1 + (gain / loss.replace(0, 0.001)))).iloc[-1]
             
-            # معادلة قوة الدخول %
-            entry_score = 100 - rsi
-            if change > 0: entry_score += 10
-            entry_score = min(max(entry_score, 5), 98)
-            
-            # حساب نسبة المخاطرة
-            volatility = (df_t['High'] - df_t['Low']).mean()
-            risk_pct = (volatility / price) * 100
-            
-            status = "انتظار"
-            if entry_score > 75: status = "🎯 اقتناص الآن"
-            elif entry_score > 60: status = "👀 مراقبة"
+            # معادلة قوة الدخول المدمجة بالزخم
+            entry_score = (100 - rsi) * (1 + (vol_ratio * 0.2)) # وزن إضافي للسيولة
+            if change > 0: entry_score += 15 # وزن إضافي للتسارع السعري
+            entry_score = min(max(entry_score, 5), 99.9)
+
+            # --- الميزة 2: نظام الاحتمالات اللونية (Heat-Mapping) ---
+            status = "انتظار ⏳"
+            if entry_score > 85: status = "🔥 انفجار وشيك"
+            elif entry_score > 70: status = "✅ اقتناص ذهبي"
+            elif entry_score > 55: status = "👀 مراقبة"
 
             results.append({
                 "الرمز": ticker,
                 "السعر": f"${price:.2f}",
-                "قوة الدخول %": round(entry_score, 1),
-                "المخاطرة %": round(risk_pct, 1),
+                "قوة الفرصة %": round(entry_score, 1),
                 "التغير": f"{change:+.2f}%",
-                "الحالة": status
+                "الحالة": status,
+                "القطاع": df_raw[df_raw['Symbol']==ticker]['Sector'].values[0] if ticker in df_raw['Symbol'].values else "أخرى"
             })
         
-        final_df = pd.DataFrame(results)
-        # الترتيب بالأفضلية (الأعلى قوة دخول في القمة)
-        if not final_df.empty:
-            final_df = final_df.sort_values(by="قوة الدخول %", ascending=False).reset_index(drop=True)
-        return final_df
-    except: return pd.DataFrame()
+        final_df = pd.DataFrame(results).sort_values(by="قوة الفرصة %", ascending=False)
+        return final_df, top_sector
+    except Exception as e:
+        st.error(f"خطأ في المحرك: {e}")
+        return pd.DataFrame(), "N/A"
 
-# --- 3. عرض الواجهة (الجدول العملاق) ---
-st.title("🏹 منصة الفرص الذكية")
-st.write(f"📡 تحديث تلقائي للرادار كل دقيقة | الوقت الحالي: {datetime.now().strftime('%H:%M:%S')}")
+# --- 3. عرض غرفة العمليات ---
+st.title("🛰️ غرفة عمليات الفرص الذكية")
 
-df_final = get_ranked_data()
+df_final, leading_sector = run_smart_engine()
 
 if not df_final.empty:
-    st.markdown("### 🔝 قائمة الفرص المُرتبة بالأفضلية")
-    
-    # تنسيق الألوان للنسب الكبيرة
-    def apply_style(val):
-        color = '#00ffcc' if val > 75 else '#ffcc00' if val > 50 else '#ff4b4b'
-        return f'color: {color}; font-weight: bold; font-size: 1.4rem;'
+    # عرض الميزة 3: رادار قوة القطاع
+    st.markdown(f"""
+    <div class="sector-box">
+        <span style="font-size:1.5rem;">🚩 القطاع القائد للسوق الآن: </span>
+        <span style="font-size:2rem; color:#00ffcc; font-weight:bold;">{leading_sector}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # عرض الجدول بكامل عرض الصفحة مع تكبير الخطوط
+    # عرض جدول الفرص (الاحتمالات اللونية مدمجة برمجياً)
+    def heat_map_style(val):
+        if "🔥" in str(val): color = '#ff3300' # برتقالي محروق للانفجار
+        elif "✅" in str(val): color = '#00ffcc' # أخضر فسفوري للاقتناص
+        elif "👀" in str(val): color = '#ffcc00' # أصفر للمراقبة
+        else: color = '#888'
+        return f'color: {color}; font-weight: bold; font-size: 1.6rem;'
+
     st.dataframe(
-        df_final.style.applymap(apply_style, subset=['قوة الدخول %'])
-        .applymap(lambda x: 'color: #ff4b4b' if float(x) > 4 else 'color: #00ffcc', subset=['المخاطرة %']),
-        use_container_width=True, 
+        df_final.style.applymap(heat_map_style, subset=['الحالة'])
+        .applymap(lambda x: 'color: #00ffcc; font-size: 1.7rem;' if float(x) > 70 else 'color: #f0f0f0;', subset=['قوة الفرصة %']),
+        use_container_width=True,
         hide_index=True,
-        height=800 # زيادة طول الجدول للعرض الواضح
+        height=900
     )
 else:
-    st.info("🔎 جاري تحليل بيانات السوق واقتناص أفضل الفرص...")
-
-st.sidebar.markdown("---")
-st.sidebar.write("💡 **نصيحة:** الأسهم في أعلى الجدول تمتلك أعلى احتمالية للارتداد السعري بناءً على زخم السوق الحالي.")
+    st.info("🔎 المحرك الذكي يمسح القطاعات والسيولة الآن...")
