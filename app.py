@@ -4,134 +4,121 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
-import time
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. إعدادات الهوية والواجهة ---
-st.set_page_config(page_title="منصة الفرص الذكية", layout="wide", page_icon="🎯")
+# --- 1. تصميم الواجهة الفريد (Cyber-Trading Style) ---
+st.set_page_config(page_title="غرفة عمليات الفرص", layout="wide", page_icon="🎛️")
 
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; }
-    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #444; }
+    body { color: #e0e0e0; }
+    .stApp { background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); }
+    .metric-card {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 20px;
+        border-radius: 15px;
+        border: 1px solid rgba(0, 255, 255, 0.2);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    }
+    .status-buy { color: #00ffcc; font-weight: bold; text-shadow: 0 0 10px #00ffcc; }
+    .status-sell { color: #ff4b4b; font-weight: bold; text-shadow: 0 0 10px #ff4b4b; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. نظام الأسرار والتحديث التلقائي ---
-TOKEN_FROM_SECRETS = st.secrets.get("TELEGRAM_TOKEN", "")
-ID_FROM_SECRETS = st.secrets.get("TELEGRAM_CHAT_ID", "")
+# --- 2. الإعدادات والربط ---
+TOKEN = st.secrets.get("TELEGRAM_TOKEN", "")
+CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
+st_autorefresh(interval=45 * 1000, key="pro_refresh") # تحديث أسرع كل 45 ثانية
 
-TELEGRAM_TOKEN = TOKEN_FROM_SECRETS if TOKEN_FROM_SECRETS else st.sidebar.text_input("Telegram Token", type="password")
-TELEGRAM_CHAT_ID = ID_FROM_SECRETS if ID_FROM_SECRETS else st.sidebar.text_input("Telegram Chat ID")
+if 'alerts_history' not in st.session_state: st.session_state.alerts_history = []
 
-st_autorefresh(interval=60 * 1000, key="smart_refresh")
-
-if 'sent_alerts' not in st.session_state:
-    st.session_state.sent_alerts = set()
-
-# --- 3. الوظائف البرمجية المساندة ---
-def send_telegram_msg(message):
-    if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-            requests.post(url, data=payload, timeout=10)
-        except Exception:
-            pass
-
-def clean_ticker(ticker):
-    return str(ticker).replace('.', '-').strip()
-
-# --- 4. محرك تحليل الفرص الذكي ---
-def run_smart_scanner():
+# --- 3. محرك الإبداع: تحليل الزخم الذكي ---
+def advanced_analysis():
     try:
-        df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
-        df_raw['Market Cap'] = pd.to_numeric(df_raw['Market Cap'], errors='coerce').fillna(0)
+        df = pd.read_csv('nasdaq_screener_1770731394680.csv')
+        # تصفية النخبة (أعلى سيولة فقط)
+        top_stocks = df[df['Volume'] > 500000].sort_values(by='Volume', ascending=False).head(35)
+        symbols = [str(s).replace('.', '-').strip() for s in top_stocks['Symbol']]
         
-        filtered = df_raw[(df_raw['Market Cap'] > 15_000_000) & (df_raw['Volume'] > 150000)]
-        watchlist = filtered.sort_values(by='Volume', ascending=False).head(40)
-        
-        symbols = [clean_ticker(s) for s in watchlist['Symbol']]
-        data = yf.download(symbols, period="7d", interval="1h", group_by='ticker', progress=False)
+        data = yf.download(symbols, period="5d", interval="60m", group_by='ticker', progress=False)
         
         results = []
-        for index, row_meta in watchlist.iterrows():
-            ticker = clean_ticker(row_meta['Symbol'])
+        for ticker in symbols:
             if ticker not in data or data[ticker].empty: continue
-            
             df_t = data[ticker].dropna()
-            if len(df_t) < 15: continue
+            if len(df_t) < 10: continue
             
-            price = df_t['Close'].iloc[-1]
-            prev_close = df_t['Close'].iloc[-2]
-            change = ((price - prev_close) / prev_close) * 100
+            # حساب الزخم المبتكر (Price + Volatility + Volume)
+            close = df_t['Close'].iloc[-1]
+            change = ((close - df_t['Close'].iloc[-2]) / df_t['Close'].iloc[-2]) * 100
             
+            # حساب RSI
             delta = df_t['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
             rsi = 100 - (100 / (1 + (gain / loss.replace(0, 0.001)))).iloc[-1]
             
-            # حساب وقف الخسارة والهدف (إدارة مخاطر احترافية)
-            volatility = (df_t['High'] - df_t['Low']).mean()
-            stop_loss = price - (volatility * 1.5)
-            # الهدف: نسبة ربح إلى خسارة 1:2
-            risk_amount = price - stop_loss
-            target_price = price + (risk_amount * 2) 
+            # ميزة فريدة: "درجة الانفجار" (Explosion Score)
+            vol_ratio = df_t['Volume'].iloc[-1] / df_t['Volume'].mean()
+            score = (100 - rsi) * (vol_ratio) if change > 0 else 0
             
-            action = "مراقبة 👀"
-            if rsi < 45 and change > 0.5:
-                action = "شراء 🚀"
-                if ticker not in st.session_state.sent_alerts:
-                    msg = (f"🎯 *فرصة من منصة الفرص الذكية!*\n\n"
-                           f"السهم: #{ticker}\n"
-                           f"السعر: ${price:.2f}\n"
-                           f"الهدف المتوقع: ${target_price:.2f} 💰\n"
-                           f"وقف الخسارة: ${stop_loss:.2f} 🛡️\n"
-                           f"RSI: {rsi:.1f}")
-                    send_telegram_msg(msg)
-                    st.session_state.sent_alerts.add(ticker)
-            
+            action = "انتظار ⏳"
+            color = "#ffffff"
+            if rsi < 40 and change > 0.2:
+                action = "اقتناص 🎯"
+                color = "#00ffcc"
+                if ticker not in st.session_state.alerts_history:
+                    requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
+                                 data={"chat_id": CHAT_ID, "text": f"🚀 إشارة ذهبية: {ticker}\nالسعر: {close:.2f}\nالزخم: {score:.1f}", "parse_mode": "Markdown"})
+                    st.session_state.alerts_history.append(ticker)
+
             results.append({
-                "الرمز": ticker, "السعر": round(price, 2), "التغير%": round(change, 2),
-                "RSI": round(rsi, 1), "التوصية": action, 
-                "الهدف": round(target_price, 2), "الوقف": round(stop_loss, 2)
+                "الرمز": ticker, "السعر": round(close, 2), "التغير": f"{change:.2f}%",
+                "RSI": round(rsi, 1), "قوة الزخم": round(score, 1), "الحالة": action
             })
-            
         return pd.DataFrame(results)
-    except Exception as e:
-        st.error(f"حدث خطأ: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# --- 5. واجهة المستخدم النهائية ---
-st.title("🏹 منصة الفرص الذكية | رادار الاقتناص اللحظي")
+# --- 4. تصميم واجهة "غرفة العمليات" ---
+st.title("🛰️ غرفة عمليات الفرص الذكية")
+st.write(f"آخر تحديث للرادار: {datetime.now().strftime('%H:%M:%S')}")
 
-with st.spinner('جاري قنص أفضل الفرص...'):
-    df_results = run_smart_scanner()
+df_res = advanced_analysis()
 
-if not df_results.empty:
-    st.markdown("---")
-    col_list, col_chart = st.columns([1, 1.4])
-    
-    with col_list:
-        st.subheader("📋 مصفوفة الفرص")
-        st.dataframe(df_results, use_container_width=True, hide_index=True)
-        selected = st.selectbox("اختر السهم للتحليل:", df_results['الرمز'].tolist())
-    
-    with col_chart:
-        st.subheader(f"📊 تحليل حركة {selected}")
-        chart_raw = yf.download(selected, period="5d", interval="15m", progress=False)
-        if isinstance(chart_raw.columns, pd.MultiIndex): chart_raw.columns = chart_raw.columns.get_level_values(0)
-            
-        if not chart_raw.empty:
-            fig = go.Figure(data=[go.Candlestick(x=chart_raw.index, open=chart_raw['Open'], high=chart_raw['High'], low=chart_raw['Low'], close=chart_raw['Close'])])
-            
-            # رسم خطوط الهدف والوقف على الشارت
-            s_info = df_results[df_results['الرمز'] == selected].iloc[0]
-            fig.add_hline(y=s_info['الهدف'], line_dash="dash", line_color="#00ff00", annotation_text="Target")
-            fig.add_hline(y=s_info['الوقف'], line_dash="dash", line_color="#ff4b4b", annotation_text="Stop Loss")
-            
-            fig.update_layout(template="plotly_dark", height=480, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False)
-            st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("🔎 الرادار يبحث عن فرص دخول مثالية...")
+# عرض البطاقات العلوية بتصميم عصري
+cols = st.columns(4)
+if not df_res.empty:
+    with cols[0]: st.markdown(f'<div class="metric-card">🟢 فرص الاقتناص<br><h2>{len(df_res[df_res["الحالة"]=="اقتناص 🎯"])}</h2></div>', unsafe_allow_html=True)
+    with cols[1]: st.markdown(f'<div class="metric-card">🔥 أعلى زخم<br><h2>{df_res["الرمز"].iloc[df_res["قوة الزخم"].argmax()]}</h2></div>', unsafe_allow_html=True)
+    with cols[2]: st.markdown(f'<div class="metric-card">📊 حجم التداول<br><h2>نشط جداً</h2></div>', unsafe_allow_html=True)
+    with cols[3]: st.markdown(f'<div class="metric-card">⏱️ التحديث<br><h2>آلي</h2></div>', unsafe_allow_html=True)
+
+st.markdown("---")
+
+# عرض البيانات بشكل إبداعي
+c_left, c_right = st.columns([1.2, 2])
+
+with c_left:
+    st.subheader("📡 الرادار النشط")
+    # عرض الجدول بتنسيق لوني
+    for _, row in df_res.iterrows():
+        st.markdown(f"""
+        <div style="padding:10px; border-bottom:1px solid #333; display:flex; justify-content:space-between;">
+            <span><b>{row['الرمز']}</b></span>
+            <span style="color:{'#00ffcc' if '🎯' in row['الحالة'] else '#fff'}">{row['الحالة']}</span>
+            <span style="color:#00ffcc">{row['التغير']}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+with c_right:
+    if not df_res.empty:
+        selected = st.selectbox("تحليل متقدم للسهم:", df_res['الرمز'].tolist())
+        st.subheader(f"📊 نبض السهم: {selected}")
+        
+        hist = yf.download(selected, period="5d", interval="15m", progress=False)
+        if isinstance(hist.columns, pd.MultiIndex): hist.columns = hist.columns.get_level_values(0)
+        
+        fig = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'])])
+        fig.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=500, xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig, use_container_width=True)
