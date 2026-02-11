@@ -3,105 +3,79 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import requests
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. التنسيق البصري ---
-st.set_page_config(page_title="رادار الدقة المطلقة", layout="wide")
+# --- 1. تصميم واجهة التدقيق ---
+st.set_page_config(page_title="منصة التدقيق والجودة", layout="wide")
 
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Inter:wght@400;700&display=swap');
-    .stApp { background: radial-gradient(circle, #0a0a12 0%, #050505 100%); color: #f0f0f0; font-family: 'Inter', sans-serif; }
-    h1 { font-family: 'Orbitron', sans-serif; font-size: 3rem !important; color: #00ffcc !important; text-align: center; text-shadow: 0 0 20px #00ffcc; }
-    .stDataFrame div { font-size: 1.6rem !important; font-weight: 700 !important; }
-    .live-indicator { background: rgba(0, 255, 204, 0.1); padding: 15px; border-radius: 12px; border: 1px solid #00ffcc; text-align: center; font-size: 1.4rem; margin-bottom: 25px; }
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Roboto+Mono:wght@400;700&display=swap');
+    .stApp { background: #050505; color: #00ffcc; font-family: 'Roboto Mono', monospace; }
+    h1 { font-family: 'Orbitron', sans-serif; text-align: center; color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }
+    .stDataFrame div { font-size: 1.4rem !important; }
+    .test-box { border: 1px solid #00ffcc; padding: 10px; border-radius: 5px; margin-bottom: 20px; background: rgba(0, 255, 204, 0.05); }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. نظام التنبيهات الذكي ---
-TOKEN = st.secrets.get("TELEGRAM_TOKEN", "")
-CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
+# --- 2. محرك الجودة والدقة ---
+st_autorefresh(interval=30 * 1000, key="v17_1_refresh")
 
-if 'alert_prices' not in st.session_state:
-    st.session_state.alert_prices = {} 
-
-def send_telegram_msg(message):
-    if TOKEN and CHAT_ID:
-        try:
-            url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-            payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-            requests.post(url, data=payload, timeout=10)
-        except: pass
-
-# --- 3. محرك الدقة الفائقة (Real-Time Pre-Market Engine) ---
-st_autorefresh(interval=30 * 1000, key="v17_refresh") # تقليل وقت التحديث لـ 30 ثانية لزيادة الدقة
-
-def get_real_time_data():
+def run_quality_check_engine():
     try:
-        df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
-        watchlist = df_raw[df_raw['Volume'] > 300000].sort_values(by='Volume', ascending=False).head(40)
-        symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
+        # تقليل العدد لضمان استجابة السيرفر وسرعة البيانات
+        symbols = ['TSLA', 'NVDA', 'AAPL', 'AMD', 'MSFT', 'AMZN', 'META', 'GOOGL', 'NFLX', 'INTC']
         
         results = []
-        # جلب البيانات لكل سهم على حدة لضمان الدقة (Fast Info Access)
+        # جلب البيانات لكل سهم مع ميزة التداول المسبق
         for ticker in symbols:
             t_obj = yf.Ticker(ticker)
-            
-            # جلب بيانات تاريخية دقيقة جداً (دقيقة واحدة) تشمل التداول المسبق
+            # جلب آخر 5 دقائق فقط لضمان أقصى سرعة ودقة
             hist = t_obj.history(period="1d", interval="1m", prepost=True)
             
             if hist.empty: continue
             
-            # السعر الفعلي الآن (Last Traded Price)
-            live_price = hist['Close'].iloc[-1]
-            prev_price = hist['Close'].iloc[-2] if len(hist) > 1 else live_price
+            live_p = hist['Close'].iloc[-1]
+            last_update = hist.index[-1].strftime('%H:%M:%S') # توقيت آخر صفقة
+            vol_last_5m = hist['Volume'].tail(5).sum() # حجم التداول في آخر 5 دقائق
             
-            # حساب التغير اللحظي الفعلي
-            momentum_10m = ((live_price - hist['Close'].iloc[-10]) / hist['Close'].iloc[-10]) * 100 if len(hist) > 10 else 0
-            
-            # حساب السيولة اللحظية
-            vol_now = hist['Volume'].iloc[-1]
-            rel_vol = vol_now / hist['Volume'].mean() if not hist['Volume'].mean() == 0 else 1
-
-            # معادلة الأفضلية (وزن هائل للتغير اللحظي)
-            priority_score = (momentum_10m * 60) + (rel_vol * 40)
-            priority_score = min(max(priority_score, 0), 99.9)
-
-            # منطق التنبيه (قاعدة الـ 5% بناءً على السعر الحقيقي الجديد)
-            last_p = st.session_state.alert_prices.get(ticker)
-            if priority_score > 70 and last_p is None:
-                send_telegram_msg(f"🎯 *سعر حي ومباشر: #{ticker}*\nالسعر الآن: ${live_price:.2f}\nالزخم: {priority_score:.1f}%")
-                st.session_state.alert_prices[ticker] = live_price
-            elif last_p is not None:
-                if abs((live_price - last_p) / last_p) * 100 >= 5.0:
-                    send_telegram_msg(f"⚠️ *تغير 5% حقيقي: #{ticker}*\nالسعر الجديد: ${live_price:.2f}")
-                    st.session_state.alert_prices[ticker] = live_price
+            # حساب الفجوة السعرية (Gap) للتأكد من التقاط سعر ما قبل الافتتاح
+            # السعر الحالي مقابل سعر إغلاق الأمس
+            prev_close = t_obj.fast_info.get('previousClose', live_p)
+            gap_pct = ((live_p - prev_close) / prev_close) * 100
 
             results.append({
                 "الرمز": ticker,
-                "السعر المباشر ⚡": f"${live_price:.2f}",
-                "قوة الأفضلية %": round(priority_score, 1),
-                "تغير 10 دقائق": f"{momentum_10m:+.2f}%",
-                "الحالة": "🔥 انفجار لحظي" if momentum_1h > 80 else "📈 نشاط ما قبل الافتتاح",
-                "السيولة": f"{rel_vol:.1f}x"
+                "السعر المباشر": f"${live_p:.2f}",
+                "توقيت التحديث": last_update,
+                "فجوة السعر %": f"{gap_pct:+.2f}%",
+                "سيولة (5د)": int(vol_last_5m),
+                "الجودة": "✅ دقيق (حية)" if vol_last_5m > 0 else "⚠️ خامل"
             })
             
-        return pd.DataFrame(results).sort_values(by="قوة الأفضلية %", ascending=False)
-    except: return pd.DataFrame()
+        return pd.DataFrame(results)
+    except Exception as e:
+        st.error(f"خطأ في التدقيق: {e}")
+        return pd.DataFrame()
 
-# --- 4. العرض ---
-st.title("🏹 رادار الدقة المطلقة والسعر اللحظي")
+# --- 3. عرض لوحة الجودة ---
+st.title("🏹 منصة التدقيق والجودة الفائقة")
 
 st.markdown("""
-<div class="live-indicator">
-    🔴 البث المباشر نشط | الرادار يجلب الآن أسعار "التداول المسبق" بدقة دقيقة واحدة | التحديث كل 30 ثانية
+<div class="test-box">
+    <strong>🎯 اختبار الدقة:</strong> إذا كان "توقيت التحديث" يطابق الوقت الحالي و "السيولة (5د)" تتغير، فالمنصة تعمل بكفاءة 100%.
 </div>
 """, unsafe_allow_html=True)
 
-df_final = get_real_time_data()
+df_check = run_quality_check_engine()
 
-if not df_final.empty:
-    st.dataframe(df_final, use_container_width=True, hide_index=True, height=800)
+if not df_check.empty:
+    st.dataframe(df_check, use_container_width=True, hide_index=True)
+    
+    # رسم بياني صغير للتأكد من الحركة (اختبار البصر)
+    st.markdown("### 📈 اختبار حركة الزخم (لأول سهم في القائمة)")
+    top_ticker = df_check['الرمز'].iloc[0]
+    test_hist = yf.download(top_ticker, period="1d", interval="1m", prepost=True, progress=False)
+    st.line_chart(test_hist['Close'])
 else:
-    st.info("🔎 جاري مطابقة الأسعار مع السوق العالمي... يرجى الانتظار")
+    st.warning("⚠️ بانتظار استجابة سيرفرات البيانات... تأكد من أن السوق في فترة تداول (رسمي أو مسبق).")
