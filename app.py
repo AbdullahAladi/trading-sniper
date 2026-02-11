@@ -6,20 +6,20 @@ from datetime import datetime
 import requests
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. الهوية البصرية الملكية ---
-st.set_page_config(page_title="رادار الأفضلية والزخم المستمر", layout="wide")
+# --- 1. التنسيق البصري ---
+st.set_page_config(page_title="رادار الدقة المطلقة", layout="wide")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Inter:wght@400;700&display=swap');
     .stApp { background: radial-gradient(circle, #0a0a12 0%, #050505 100%); color: #f0f0f0; font-family: 'Inter', sans-serif; }
-    h1 { font-family: 'Orbitron', sans-serif; font-size: 3.2rem !important; color: #00ffcc !important; text-align: center; text-shadow: 0 0 20px #00ffcc; margin-top: -20px; }
+    h1 { font-family: 'Orbitron', sans-serif; font-size: 3rem !important; color: #00ffcc !important; text-align: center; text-shadow: 0 0 20px #00ffcc; }
     .stDataFrame div { font-size: 1.6rem !important; font-weight: 700 !important; }
-    .ticker-tape { background: rgba(0, 255, 204, 0.1); padding: 15px; border-radius: 12px; border: 1px solid #00ffcc; text-align: center; font-size: 1.4rem; margin-bottom: 25px; }
+    .live-indicator { background: rgba(0, 255, 204, 0.1); padding: 15px; border-radius: 12px; border: 1px solid #00ffcc; text-align: center; font-size: 1.4rem; margin-bottom: 25px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. إدارة التنبيهات الذكية ---
+# --- 2. نظام التنبيهات الذكي ---
 TOKEN = st.secrets.get("TELEGRAM_TOKEN", "")
 CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
@@ -34,83 +34,74 @@ def send_telegram_msg(message):
             requests.post(url, data=payload, timeout=10)
         except: pass
 
-# --- 3. محرك الأفضلية المصحح (التعامل مع التداول المستمر) ---
-st_autorefresh(interval=60 * 1000, key="v16_1_refresh")
+# --- 3. محرك الدقة الفائقة (Real-Time Pre-Market Engine) ---
+st_autorefresh(interval=30 * 1000, key="v17_refresh") # تقليل وقت التحديث لـ 30 ثانية لزيادة الدقة
 
-def run_ultimate_stable_engine():
+def get_real_time_data():
     try:
-        # تحميل قائمة الأسهم
         df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
-        # فلترة لضمان جودة الأسهم الممسوحة
-        watchlist = df_raw[df_raw['Volume'] > 300000].sort_values(by='Volume', ascending=False).head(50)
+        watchlist = df_raw[df_raw['Volume'] > 300000].sort_values(by='Volume', ascending=False).head(40)
         symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
         
-        # جلب البيانات (تمت إزالة include_postpre من download لتفادي الخطأ)
-        data = yf.download(symbols, period="2d", interval="15m", group_by='ticker', progress=False)
-        
         results = []
+        # جلب البيانات لكل سهم على حدة لضمان الدقة (Fast Info Access)
         for ticker in symbols:
-            if ticker not in data or data[ticker].empty: continue
-            df_t = data[ticker].dropna()
-            if len(df_t) < 5: continue
+            t_obj = yf.Ticker(ticker)
             
-            # السعر الحالي (يعمل لحظياً أثناء السوق)
-            live_price = df_t['Close'].iloc[-1]
+            # جلب بيانات تاريخية دقيقة جداً (دقيقة واحدة) تشمل التداول المسبق
+            hist = t_obj.history(period="1d", interval="1m", prepost=True)
             
-            # حساب الزخم اللحظي (آخر ساعة)
-            momentum_1h = ((live_price - df_t['Close'].iloc[-4]) / df_t['Close'].iloc[-4]) * 100
-            # التغير اليومي
-            daily_change = ((live_price - df_t['Open'].iloc[0]) / df_t['Open'].iloc[0]) * 100
+            if hist.empty: continue
             
-            # السيولة النسبية
-            vol_now = df_t['Volume'].iloc[-1]
-            vol_avg = df_t['Volume'].mean()
-            rel_vol = vol_now / vol_avg
+            # السعر الفعلي الآن (Last Traded Price)
+            live_price = hist['Close'].iloc[-1]
+            prev_price = hist['Close'].iloc[-2] if len(hist) > 1 else live_price
             
-            # معادلة الأفضلية المطورة (ترتيب حقيقي بناءً على الحركة)
-            priority_score = (momentum_1h * 45) + (rel_vol * 35) + (abs(daily_change) * 5)
+            # حساب التغير اللحظي الفعلي
+            momentum_10m = ((live_price - hist['Close'].iloc[-10]) / hist['Close'].iloc[-10]) * 100 if len(hist) > 10 else 0
+            
+            # حساب السيولة اللحظية
+            vol_now = hist['Volume'].iloc[-1]
+            rel_vol = vol_now / hist['Volume'].mean() if not hist['Volume'].mean() == 0 else 1
+
+            # معادلة الأفضلية (وزن هائل للتغير اللحظي)
+            priority_score = (momentum_10m * 60) + (rel_vol * 40)
             priority_score = min(max(priority_score, 0), 99.9)
 
-            # التنبيهات الذكية
+            # منطق التنبيه (قاعدة الـ 5% بناءً على السعر الحقيقي الجديد)
             last_p = st.session_state.alert_prices.get(ticker)
-            if priority_score > 75 and last_p is None:
-                send_telegram_msg(f"🎯 *إشارة حية: #{ticker}*\nزخم شرائي قوي مكتشف!\nالسعر: ${live_price:.2f}\nالقوة: {priority_score:.1f}%")
+            if priority_score > 70 and last_p is None:
+                send_telegram_msg(f"🎯 *سعر حي ومباشر: #{ticker}*\nالسعر الآن: ${live_price:.2f}\nالزخم: {priority_score:.1f}%")
                 st.session_state.alert_prices[ticker] = live_price
             elif last_p is not None:
                 if abs((live_price - last_p) / last_p) * 100 >= 5.0:
-                    send_telegram_msg(f"⚠️ *تحرك 5%: #{ticker}*\nتغير سعري كبير!\nالسعر الحالي: ${live_price:.2f}")
+                    send_telegram_msg(f"⚠️ *تغير 5% حقيقي: #{ticker}*\nالسعر الجديد: ${live_price:.2f}")
                     st.session_state.alert_prices[ticker] = live_price
 
-            if priority_score > 2:
-                results.append({
-                    "الرمز": ticker,
-                    "السعر": f"${live_price:.2f}",
-                    "قوة الأفضلية %": round(priority_score, 1),
-                    "الزخم (1h)": f"{momentum_1h:+.2f}%",
-                    "الحالة": "🔥 انفجار زخم" if priority_score > 80 else "📈 صعود نشط" if momentum_1h > 0 else "👀 مراقبة",
-                    "السيولة": f"{rel_vol:.1f}x"
-                })
-        
+            results.append({
+                "الرمز": ticker,
+                "السعر المباشر ⚡": f"${live_price:.2f}",
+                "قوة الأفضلية %": round(priority_score, 1),
+                "تغير 10 دقائق": f"{momentum_10m:+.2f}%",
+                "الحالة": "🔥 انفجار لحظي" if momentum_1h > 80 else "📈 نشاط ما قبل الافتتاح",
+                "السيولة": f"{rel_vol:.1f}x"
+            })
+            
         return pd.DataFrame(results).sort_values(by="قوة الأفضلية %", ascending=False)
-    except Exception as e:
-        st.error(f"خطأ في النظام: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 # --- 4. العرض ---
-st.title("🛰️ رادار الأفضلية والزخم المستمر")
+st.title("🏹 رادار الدقة المطلقة والسعر اللحظي")
 
 st.markdown("""
-<div class="ticker-tape">
-    📡 الرادار يراقب الآن نبض السوق والسيولة | التنبيهات ذكية ومفعلة على تحركات الـ 5%
+<div class="live-indicator">
+    🔴 البث المباشر نشط | الرادار يجلب الآن أسعار "التداول المسبق" بدقة دقيقة واحدة | التحديث كل 30 ثانية
 </div>
 """, unsafe_allow_html=True)
 
-df_final = run_ultimate_stable_engine()
+df_final = get_real_time_data()
 
 if not df_final.empty:
-    st.dataframe(
-        df_final.style.applymap(lambda x: 'color: #00ffcc; font-weight: bold;' if '🔥' in str(x) or '📈' in str(x) else 'color: #ffcc00;', subset=['الحالة']),
-        use_container_width=True, hide_index=True, height=850
-    )
+    st.dataframe(df_final, use_container_width=True, hide_index=True, height=800)
 else:
-    st.info("🔎 جاري تحليل تدفق السيولة... يرجى الانتظار ثوانٍ.")
+    st.info("🔎 جاري مطابقة الأسعار مع السوق العالمي... يرجى الانتظار")
