@@ -1,8 +1,9 @@
-streamlit
+pandas-ta
 yfinance
-pandas
-numpy
+streamlit
 requests
 streamlit-autorefresh
 xlsxwriter
 plotly
+pandas
+numpy
