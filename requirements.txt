@@ -5,4 +5,4 @@ numpy
 requests
 streamlit-autorefresh
 xlsxwriter
-openpyxl
+plotly
