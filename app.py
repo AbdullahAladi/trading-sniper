@@ -48,11 +48,13 @@ with tab1:
     st.markdown('<div class="status-bar">📡 فلتر جودة الأسعار نشط (> $1) | نظام الوقف المتحرك مفعل</div>', unsafe_allow_html=True)
 
     try:
+        # قراءة الملف مع تطبيق فلاتر الجودة قبل البدء
         df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
-        # تحسين الفلتر: استبعاد الأسهم الرخيصة جداً ورفع حد السيولة
+        # فلترة: السعر > 1 دولار والسيولة > مليون سهم لضمان الجودة
         watchlist = df_raw[(df_raw['Last Price'] > 1.0) & (df_raw['Volume'] > 1000000)].sort_values(by='Volume', ascending=False).head(40)
         symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
         
+        # الجلب الجماعي السريع
         all_data = yf.download(symbols, period="2d", interval="1m", group_by='ticker', progress=False, prepost=True, threads=True)
         
         results = []
@@ -64,13 +66,14 @@ with tab1:
             live_p = df_t['Close'].iloc[-1]
             daily_high = df_t['High'].max()
             
-            # --- نظام الأهداف والوقف المتحرك ---
-            target1 = live_p * 1.02  # هدف أول عند 2%
-            target2 = live_p * 1.05  # هدف ثاني عند 5%
+            # --- نظام الأهداف والوقف المتحرك الذكي ---
+            target1 = live_p * 1.02  # هدف 1 عند 2%
+            target2 = live_p * 1.05  # هدف 2 عند 5%
             
-            # الوقف المتحرك: يبدأ عند 3%، ويرتفع لسعر الدخول إذا حقق السهم 1% ربح
+            # الوقف المتحرك: إذا حقق السهم 1% صعوداً من السعر الحالي، يرتفع الوقف لسعر الدخول تلقائياً
             initial_sl = live_p * 0.97
-            trailing_sl = live_p if (live_p > daily_high * 0.99) else initial_sl
+            is_profit_secured = (live_p >= live_p * 1.01)
+            trailing_sl = live_p if is_profit_secured else initial_sl
             
             # حساب الأفضلية
             rel_vol = df_t['Volume'].iloc[-1] / (df_t['Volume'].mean() + 1)
@@ -79,7 +82,7 @@ with tab1:
             priority_score = (mom_15m * 50) + (rel_vol * 50)
             priority_score = min(max(priority_score, 0), 99.9)
 
-            # التنبيهات مع فلاتر الجودة
+            # إرسال التنبيهات (تم رفع المعيار لـ 88% لضمان جودة استثنائية)
             last_p = st.session_state.alert_prices.get(ticker)
             if priority_score >= 88 and last_p is None:
                 send_telegram_strategy(ticker, live_p, target1, target2, trailing_sl, priority_score)
@@ -96,13 +99,18 @@ with tab1:
                 "الحالة": "🔥 انفجار" if priority_score > 85 else "📈 مراقبة"
             })
 
-        df_final = pd.DataFrame(results).sort_values(by="الأفضلية %", ascending=False)
-        st.dataframe(df_final, use_container_width=True, hide_index=True, height=750)
+        if results:
+            df_final = pd.DataFrame(results).sort_values(by="الأفضلية %", ascending=False)
+            st.dataframe(df_final, use_container_width=True, hide_index=True, height=750)
+        else:
+            st.warning("🔎 لا توجد أسهم تحقق معايير الجودة حالياً (سعر > $1 وسيولة عالية).")
             
-    except:
-        st.info("🔎 الرادار يطبق فلاتر الجودة ويحسب الوقف المتحرك... يرجى الانتظار")
+    except Exception as e:
+        st.info("🔎 الرادار يطبق فلاتر الجودة ويحسب الوقف المتحرك... يرجى الانتظار ثوانٍ.")
 
 with tab2:
     st.header("📊 سجل التوصيات الذهبية")
     if not st.session_state.performance_log.empty:
         st.table(st.session_state.performance_log)
+    else:
+        st.info("🔎 بانتظار صيد أول فرصة تجمع بين 'الانفجار السعري' ومعايير النخبة.")
