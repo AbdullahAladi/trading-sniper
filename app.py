@@ -1,82 +1,73 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
-import numpy as np
-from datetime import datetime
+import pandas_ta as ta
 import requests
-from streamlit_autorefresh import st_autorefresh
+import pandas as pd
 
-# --- 1. الهوية البصرية ---
-st.set_page_config(page_title="🛰️ استرداد رادار النخبة", layout="wide")
-st.markdown("""
-    <style>
-    .stApp { background: #050505; color: #00ffcc; }
-    h1 { text-align: center; text-shadow: 0 0 10px #00ffcc; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- استدعاء الإعدادات من Secrets ---
+TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
+CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 
-# --- 2. معالج البيانات الفولاذي (لحل مشكلة الشاشة السوداء) ---
-def emergency_data_loader(file_path):
+# --- إعدادات الصفحة ---
+st.set_page_config(page_title="رادار النخبة للأسهم", layout="wide")
+st.title("🚀 رادار النخبة - فرصة التداول الذكية")
+
+# قائمة الأسهم (يمكنك جعلها مدخلات من المستخدم في الواجهة)
+default_stocks = ['AAPL', 'TSLA', 'NVDA', '2222.SR', '1120.SR', '4110.SR']
+selected_stocks = st.sidebar.multiselect("اختر الأسهم للمراقبة", default_stocks, default_stocks)
+
+def send_telegram_msg(message):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={message}&parse_mode=Markdown"
     try:
-        df = pd.read_csv(file_path)
-        # البحث الذكي عن الأعمدة بغض النظر عن أسمائها في الملف
-        col_map = {}
-        for col in df.columns:
-            if 'Symbol' in col: col_map['Symbol'] = col
-            if any(x in col for x in ['Price', 'Last', 'Close']): col_map['Price'] = col
-            if 'Volume' in col: col_map['Volume'] = col
-        
-        df = df.rename(columns=col_map)
-        # تحويل البيانات إلى أرقام حصراً (إصلاح خطأ str vs float)
-        df['Price'] = pd.to_numeric(df['Price'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce')
-        df['Volume'] = pd.to_numeric(df['Volume'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce')
-        return df.dropna(subset=['Symbol', 'Price'])
+        requests.get(url)
     except Exception as e:
-        st.error(f"❌ خطأ في قراءة الملف: {e}")
+        st.error(f"خطأ في إرسال التليجرام: {e}")
+
+def analyze_stock(ticker):
+    # جلب البيانات
+    df = yf.download(ticker, period="60d", interval="1h", progress=False)
+    if df.empty or len(df) < 50:
         return None
 
-# --- 3. المحرك ---
-st_autorefresh(interval=30 * 1000, key="v44_emergency")
-st.title("🛰️ رادار النخبة - استعادة البيانات")
+    # حساب المؤشرات فنية
+    df['RSI'] = ta.rsi(df['Close'], length=14)
+    df['EMA_20'] = ta.ema(df['Close'], length=20)
+    df['EMA_50'] = ta.ema(df['Close'], length=50)
 
-try:
-    df_raw = emergency_data_loader('nasdaq_screener_1770731394680.csv')
+    last_row = df.iloc[-1]
+    prev_row = df.iloc[-2]
+
+    # شروط الاستراتيجية (تغيير السلوك السعري)
+    price_breakout = (prev_row['Close'] < prev_row['EMA_20']) and (last_row['Close'] > last_row['EMA_20'])
+    is_bullish = last_row['RSI'] > 50
+    is_uptrend = last_row['Close'] > last_row['EMA_50']
+
+    if price_breakout and is_bullish and is_uptrend:
+        return {
+            'Symbol': ticker,
+            'Price': round(float(last_row['Close']), 2),
+            'RSI': round(float(last_row['RSI']), 2),
+            'Signal': "🔥 اختراق إيجابي"
+        }
+    return None
+
+# --- واجهة المستخدم ---
+if st.button('ابدأ المسح الآن 🔍'):
+    st.write("جاري فحص الأسهم المختارة...")
+    found_opportunities = []
     
-    if df_raw is not None:
-        # تقليل القيود لضمان ظهور نتائج (سعر > 0.1$ وسيولة > 50 ألف)
-        watchlist = df_raw[(df_raw['Price'] > 0.1) & (df_raw['Volume'] > 50000)].head(20)
-        symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
-        
-        # جلب البيانات (Threads مفعل للسرعة)
-        data = yf.download(symbols, period="1d", interval="1m", group_by='ticker', progress=False, prepost=True, threads=True)
-        
-        results = []
-        for ticker in symbols:
-            if ticker not in data or data[ticker].empty: continue
-            df_t = data[ticker].dropna()
-            if len(df_t) < 1: continue
-            
-            live_p = df_t['Close'].iloc[-1]
-            
-            # حساب الأهداف (تأكيد رياضي: الهدف > السعر ، الوقف < السعر)
-            t1 = live_p * 1.03
-            sl = live_p * 0.97
-            
-            results.append({
-                "الرمز": ticker,
-                "السعر⚡": f"${live_p:.2f}",
-                "الهدف 🎯": f"${t1:.2f}",
-                "الوقف 🛑": f"${sl:.2f}",
-                "الحالة": "✅ متصل"
-            })
+    for ticker in selected_stocks:
+        result = analyze_stock(ticker)
+        if result:
+            found_opportunities.append(result)
+            # إرسال تنبيه للتليجرام
+            msg = f"✅ *فرصة جديدة:* {ticker}\n💰 *السعر:* {result['Price']}\n📈 *RSI:* {result['RSI']}"
+            send_telegram_msg(msg)
 
-        if results:
-            st.success(f"🚀 تم استرداد البيانات! الرادار يراقب {len(results)} سهم الآن.")
-            st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
-        else:
-            st.warning("🔎 الملف سليم ولكن لم يتم استلام بيانات حية من Yahoo Finance. تأكد من اتصال الإنترنت.")
+    if found_opportunities:
+        st.success(f"تم العثور على {len(found_opportunities)} فرصة صاعدة!")
+        st.table(pd.DataFrame(found_opportunities))
     else:
-        st.error("❌ فشل تحميل الملف. تأكد من وجود nasdaq_screener_1770731394680.csv")
+        st.warning("لا توجد فرص مطابقة للشروط حالياً. جرب لاحقاً.")
 
-except Exception as e:
-    st.info("🔎 الرادار يعيد بناء جسور البيانات... يرجى الانتظار ثوانٍ.")
+st.info("ملاحظة: الكود يفحص الفاصل الزمني (ساعة) لآخر 60 يوم عمل.")
