@@ -8,53 +8,54 @@ import io
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. الهوية البصرية الملكية ---
-st.set_page_config(page_title="🛰️ رادار النخبة V37 - حماية الأرباح", layout="wide")
+st.set_page_config(page_title="🛰️ رادار النخبة V38 - تحليل القطاع والزخم", layout="wide")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Inter:wght@400;700&display=swap');
     .stApp { background: radial-gradient(circle, #0a0a12 0%, #050505 100%); color: #f0f0f0; }
     h1 { font-family: 'Orbitron', sans-serif; color: #00ffcc !important; text-align: center; text-shadow: 0 0 15px #00ffcc; }
-    .stDataFrame div { font-size: 1.4rem !important; font-weight: 700 !important; }
+    .stDataFrame div { font-size: 1.3rem !important; font-weight: 700 !important; }
     .status-bar { background: rgba(0, 255, 204, 0.1); padding: 10px; border-radius: 10px; border: 1px solid #00ffcc; text-align: center; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. إدارة الذاكرة والتنبيهات الاستراتيجية ---
+# --- 2. إدارة الذاكرة والتنبيهات ---
 if 'alert_prices' not in st.session_state: st.session_state.alert_prices = {}
 if 'performance_log' not in st.session_state:
-    st.session_state.performance_log = pd.DataFrame(columns=["التوقيت", "الرمز", "الدخول", "الهدف 1", "الوقف المتحرك"])
+    st.session_state.performance_log = pd.DataFrame(columns=["التوقيت", "الرمز", "القطاع", "الدخول", "الهدف 1"])
 
-def send_telegram_strategy(ticker, entry, t1, t2, sl, score):
+def send_telegram_strategy(ticker, sector, entry, t1, sl, score):
     TOKEN = st.secrets.get("TELEGRAM_TOKEN", "")
     CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
     if TOKEN and CHAT_ID:
         msg = (f"🎯 *توصية الفرص: #{ticker}*\n"
+               f"🏢 القطاع: {sector}\n"
                f"━━━━━━━━━━━━━━\n"
-               f"💰 سعر الدخول: ${entry:.2f}\n"
-               f"✅ هدف 1: ${t1:.2f} (تأمين الربح)\n"
-               f"🚀 هدف 2: ${t2:.2f} (انفجار)\n"
+               f"💰 دخول: ${entry:.2f}\n"
+               f"✅ هدف 1: ${t1:.2f}\n"
                f"🛑 وقف متحرك: ${sl:.2f}\n"
                f"━━━━━━━━━━━━━━\n"
-               f"⚠️ تم استبعاد الأسهم تحت $1 لضمان الجودة")
+               f"⚡ القوة: {score:.1f}%")
         try: requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=5)
         except: pass
 
 # --- 3. المحرك الاستراتيجي المطور ---
-st_autorefresh(interval=60 * 1000, key="v37_refresh")
-tab1, tab2 = st.tabs(["🛰️ رادار الفرص الذكي", "📊 سجل النخبة"])
+st_autorefresh(interval=60 * 1000, key="v38_refresh")
+tab1, tab2 = st.tabs(["🛰️ رادار الفرص والقطاعات", "📊 سجل النخبة"])
 
 with tab1:
-    st.title("🛰️ رادار النخبة V37")
-    st.markdown('<div class="status-bar">📡 فلتر جودة الأسعار نشط (> $1) | نظام الوقف المتحرك مفعل</div>', unsafe_allow_html=True)
+    st.title("🛰️ رادار النخبة V38")
+    st.markdown('<div class="status-bar">📡 تحليل القطاعات ومسار الزخم نشط | استبعاد الأسهم < $1</div>', unsafe_allow_html=True)
 
     try:
-        # قراءة الملف مع تطبيق فلاتر الجودة قبل البدء
+        # قراءة البيانات الأساسية مع الفلترة
         df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
-        # فلترة: السعر > 1 دولار والسيولة > مليون سهم لضمان الجودة
         watchlist = df_raw[(df_raw['Last Price'] > 1.0) & (df_raw['Volume'] > 1000000)].sort_values(by='Volume', ascending=False).head(40)
-        symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
         
-        # الجلب الجماعي السريع
+        symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
+        # خريطة القطاعات
+        sector_map = dict(zip(watchlist['Symbol'], watchlist['Sector']))
+        
         all_data = yf.download(symbols, period="2d", interval="1m", group_by='ticker', progress=False, prepost=True, threads=True)
         
         results = []
@@ -64,53 +65,47 @@ with tab1:
             if len(df_t) < 20: continue
             
             live_p = df_t['Close'].iloc[-1]
-            daily_high = df_t['High'].max()
+            sector = sector_map.get(ticker, "N/A")
             
-            # --- نظام الأهداف والوقف المتحرك الذكي ---
-            target1 = live_p * 1.02  # هدف 1 عند 2%
-            target2 = live_p * 1.05  # هدف 2 عند 5%
+            # --- تحليل مسار الزخم (Visual Sparkline) ---
+            trend_data = df_t['Close'].tail(5).tolist()
+            if trend_data[-1] > trend_data[0]: spark = "📈 صعود"
+            elif trend_data[-1] < trend_data[0]: spark = "📉 هبوط"
+            else: spark = "↔️ عرضي"
             
-            # الوقف المتحرك: إذا حقق السهم 1% صعوداً من السعر الحالي، يرتفع الوقف لسعر الدخول تلقائياً
-            initial_sl = live_p * 0.97
-            is_profit_secured = (live_p >= live_p * 1.01)
-            trailing_sl = live_p if is_profit_secured else initial_sl
+            # الأهداف والوقف المتحرك
+            target1 = live_p * 1.02
+            trailing_sl = live_p * 1.00 if live_p >= live_p * 1.01 else live_p * 0.97
             
-            # حساب الأفضلية
             rel_vol = df_t['Volume'].iloc[-1] / (df_t['Volume'].mean() + 1)
-            mom_15m = ((live_p - df_t['Close'].iloc[-15]) / df_t['Close'].iloc[-15]) * 100 if len(df_t) >= 15 else 0
-            
+            mom_15m = ((live_p - df_t['Close'].iloc[-15]) / df_t['Close'].iloc[-15]) * 100
             priority_score = (mom_15m * 50) + (rel_vol * 50)
             priority_score = min(max(priority_score, 0), 99.9)
 
-            # إرسال التنبيهات (تم رفع المعيار لـ 88% لضمان جودة استثنائية)
             last_p = st.session_state.alert_prices.get(ticker)
             if priority_score >= 88 and last_p is None:
-                send_telegram_strategy(ticker, live_p, target1, target2, trailing_sl, priority_score)
+                send_telegram_strategy(ticker, sector, live_p, target1, trailing_sl, priority_score)
                 st.session_state.alert_prices[ticker] = live_p
-                new_row = pd.DataFrame([{"التوقيت": datetime.now().strftime("%H:%M"), "الرمز": ticker, "الدخول": round(live_p, 2), "الهدف 1": round(target1, 2), "الوقف المتحرك": round(trailing_sl, 2)}])
+                new_row = pd.DataFrame([{"التوقيت": datetime.now().strftime("%H:%M"), "الرمز": ticker, "القطاع": sector, "الدخول": round(live_p, 2), "الهدف 1": round(target1, 2)}])
                 st.session_state.performance_log = pd.concat([st.session_state.performance_log, new_row], ignore_index=True)
 
             results.append({
                 "الرمز": ticker, 
+                "القطاع": sector,
                 "السعر⚡": f"${live_p:.2f}",
-                "الأفضلية %": round(priority_score, 1),
-                "هدف 1 ✅": f"${target1:.2f}",
-                "الوقف 🛑": f"${trailing_sl:.2f}",
-                "الحالة": "🔥 انفجار" if priority_score > 85 else "📈 مراقبة"
+                "قوة الأفضلية %": round(priority_score, 1),
+                "مسار الزخم": spark,
+                "الهدف 🎯": f"${target1:.2f}",
+                "الوقف 🛑": f"${trailing_sl:.2f}"
             })
 
-        if results:
-            df_final = pd.DataFrame(results).sort_values(by="الأفضلية %", ascending=False)
-            st.dataframe(df_final, use_container_width=True, hide_index=True, height=750)
-        else:
-            st.warning("🔎 لا توجد أسهم تحقق معايير الجودة حالياً (سعر > $1 وسيولة عالية).")
+        df_final = pd.DataFrame(results).sort_values(by="قوة الأفضلية %", ascending=False)
+        st.dataframe(df_final, use_container_width=True, hide_index=True, height=750)
             
-    except Exception as e:
-        st.info("🔎 الرادار يطبق فلاتر الجودة ويحسب الوقف المتحرك... يرجى الانتظار ثوانٍ.")
+    except:
+        st.info("🔎 الرادار يحلل تدفقات السيولة القطاعية... يرجى الانتظار")
 
 with tab2:
-    st.header("📊 سجل التوصيات الذهبية")
+    st.header("📊 سجل التوصيات القطاعية")
     if not st.session_state.performance_log.empty:
         st.table(st.session_state.performance_log)
-    else:
-        st.info("🔎 بانتظار صيد أول فرصة تجمع بين 'الانفجار السعري' ومعايير النخبة.")
