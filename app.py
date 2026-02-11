@@ -1,73 +1,107 @@
 import streamlit as st
 import yfinance as yf
+import pandas as pd
 import pandas_ta as ta
 import requests
-import pandas as pd
+from streamlit_autorefresh import st_autorefresh
+import plotly.graph_objects as go
 
-# --- استدعاء الإعدادات من Secrets ---
+# --- 1. إعدادات التليجرام من Secrets ---
 TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
 CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 
-# --- إعدادات الصفحة ---
-st.set_page_config(page_title="رادار النخبة للأسهم", layout="wide")
-st.title("🚀 رادار النخبة - فرصة التداول الذكية")
+# --- 2. تحديث تلقائي كل 10 دقائق ---
+st_autorefresh(interval=10 * 60 * 1000, key="datarefresh")
 
-# قائمة الأسهم (يمكنك جعلها مدخلات من المستخدم في الواجهة)
-default_stocks = ['AAPL', 'TSLA', 'NVDA', '2222.SR', '1120.SR', '4110.SR']
-selected_stocks = st.sidebar.multiselect("اختر الأسهم للمراقبة", default_stocks, default_stocks)
+st.set_page_config(page_title="رادار الزخم والسيولة", layout="wide")
+st.title("🏹 رادار قناص السيولة (السوق الأمريكي)")
 
-def send_telegram_msg(message):
+# قائمة بأسهم قيادية وأسهم نمو للمراقبة (يمكنك توسيعها)
+WATCHLIST = ['AAPL', 'NVDA', 'TSLA', 'AMD', 'MSFT', 'META', 'AMZN', 'NFLX', 'GOOGL', 'PLTR', 'SMCI', 'COIN']
+
+def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={message}&parse_mode=Markdown"
-    try:
-        requests.get(url)
-    except Exception as e:
-        st.error(f"خطأ في إرسال التليجرام: {e}")
+    requests.get(url)
 
-def analyze_stock(ticker):
-    # جلب البيانات
-    df = yf.download(ticker, period="60d", interval="1h", progress=False)
-    if df.empty or len(df) < 50:
+def analyze_momentum(ticker):
+    # جلب بيانات الساعة لآخر 20 يوم لضمان الدقة في رصد الزخم اللحظي
+    data = yf.download(ticker, period="20d", interval="1h", progress=False)
+    if data.empty or len(data) < 30:
         return None
 
-    # حساب المؤشرات فنية
-    df['RSI'] = ta.rsi(df['Close'], length=14)
-    df['EMA_20'] = ta.ema(df['Close'], length=20)
-    df['EMA_50'] = ta.ema(df['Close'], length=50)
+    # --- المؤشرات الفنية ---
+    # 1. الزخم (RSI)
+    data['RSI'] = ta.rsi(data['Close'], length=14)
+    
+    # 2. الاتجاه (EMA 20 & 50)
+    data['EMA20'] = ta.ema(data['Close'], length=20)
+    data['EMA50'] = ta.ema(data['Close'], length=50)
+    
+    # 3. السيولة (نسبة حجم التداول الحالي مقارنة بالمتوسط)
+    data['Vol_Avg'] = data['Volume'].rolling(window=20).mean()
+    
+    last = data.iloc[-1]
+    prev = data.iloc[-2]
 
-    last_row = df.iloc[-1]
-    prev_row = df.iloc[-2]
+    # --- شروط "قناص السيولة" ---
+    # شرط الزخم: RSI فوق 60 (دخول في منطقة القوة)
+    momentum_score = last['RSI'] > 60
+    
+    # شرط السيولة: حجم التداول الحالي أكبر بـ 1.5 مرة من المتوسط (دخول سيولة)
+    volume_spike = last['Volume'] > (last['Vol_Avg'] * 1.5)
+    
+    # شرط الاتجاه: السعر فوق المتوسطات والمتوسط الصغير فوق الكبير
+    trend_ok = last['Close'] > last['EMA20'] and last['EMA20'] > last['EMA50']
 
-    # شروط الاستراتيجية (تغيير السلوك السعري)
-    price_breakout = (prev_row['Close'] < prev_row['EMA_20']) and (last_row['Close'] > last_row['EMA_20'])
-    is_bullish = last_row['RSI'] > 50
-    is_uptrend = last_row['Close'] > last_row['EMA_50']
-
-    if price_breakout and is_bullish and is_uptrend:
+    if momentum_score and trend_ok and volume_spike:
         return {
-            'Symbol': ticker,
-            'Price': round(float(last_row['Close']), 2),
-            'RSI': round(float(last_row['RSI']), 2),
-            'Signal': "🔥 اختراق إيجابي"
+            "Symbol": ticker,
+            "Price": round(last['Close'], 2),
+            "RSI": round(last['RSI'], 1),
+            "Vol_Ratio": round(last['Volume'] / last['Vol_Avg'], 2),
+            "Change": round(((last['Close'] - prev['Close']) / prev['Close']) * 100, 2)
         }
     return None
 
 # --- واجهة المستخدم ---
-if st.button('ابدأ المسح الآن 🔍'):
-    st.write("جاري فحص الأسهم المختارة...")
-    found_opportunities = []
-    
-    for ticker in selected_stocks:
-        result = analyze_stock(ticker)
-        if result:
-            found_opportunities.append(result)
-            # إرسال تنبيه للتليجرام
-            msg = f"✅ *فرصة جديدة:* {ticker}\n💰 *السعر:* {result['Price']}\n📈 *RSI:* {result['RSI']}"
-            send_telegram_msg(msg)
+st.sidebar.header("إعدادات الرادار")
+check_list = st.sidebar.multiselect("عدل قائمة المراقبة:", WATCHLIST, default=WATCHLIST)
 
-    if found_opportunities:
-        st.success(f"تم العثور على {len(found_opportunities)} فرصة صاعدة!")
-        st.table(pd.DataFrame(found_opportunities))
-    else:
-        st.warning("لا توجد فرص مطابقة للشروط حالياً. جرب لاحقاً.")
+if st.sidebar.button("فحص يدوي الآن"):
+    st.rerun()
 
-st.info("ملاحظة: الكود يفحص الفاصل الزمني (ساعة) لآخر 60 يوم عمل.")
+st.subheader("⚠️ الأسهم التي تخترق الآن بسيولة عالية")
+cols = st.columns(3)
+
+found_any = False
+results_list = []
+
+for i, ticker in enumerate(check_list):
+    res = analyze_momentum(ticker)
+    if res:
+        found_any = True
+        results_list.append(res)
+        with cols[i % 3]:
+            st.success(f"🔥 **{ticker}**")
+            st.metric("السعر", f"${res['Price']}", f"{res['Change']}%")
+            st.write(f"📈 قوة الزخم (RSI): {res['RSI']}")
+            st.write(f"💰 انفجار السيولة: {res['Vol_Ratio']}x")
+            
+            # إرسال تنبيه تليجرام
+            alert_msg = (f"🚀 *إشارة دخول ذكية*\n\n"
+                         f"السهم: {ticker}\n"
+                         f"السعر: ${res['Price']}\n"
+                         f"الزخم (RSI): {res['RSI']}\n"
+                         f"تضاعف السيولة: {res['Vol_Ratio']} مرة\n"
+                         f"النمو اللحظي: {res['Change']}%")
+            send_telegram(alert_msg)
+
+if not found_any:
+    st.info("لا توجد أسهم تحقق شروط الزخم والسيولة العالية في هذه اللحظة. الرادار سيستمر بالبحث...")
+
+# عرض جدول البيانات العام
+if results_list:
+    st.divider()
+    st.write("### ملخص الفرص المرصودة")
+    df_res = pd.DataFrame(results_list)
+    st.dataframe(df_res, use_container_width=True)
