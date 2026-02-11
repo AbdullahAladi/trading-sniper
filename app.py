@@ -6,20 +6,20 @@ from datetime import datetime
 import requests
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. الهوية البصرية (تصميم الرادار الفائق) ---
-st.set_page_config(page_title="رادار الزخم والنشاط", layout="wide")
+# --- 1. الهوية البصرية (تصميم غرفة العمليات) ---
+st.set_page_config(page_title="رادار الأفضلية والزخم", layout="wide")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Inter:wght@400;700&display=swap');
     .stApp { background: radial-gradient(circle, #0a0a12 0%, #050505 100%); color: #f0f0f0; font-family: 'Inter', sans-serif; }
-    h1 { font-family: 'Orbitron', sans-serif; font-size: 3.2rem !important; color: #00ffcc !important; text-align: center; text-shadow: 0 0 15px #00ffcc; }
-    .stDataFrame div { font-size: 1.5rem !important; font-weight: 600 !important; }
-    .ticker-tape { background: rgba(0, 255, 204, 0.1); padding: 12px; border-radius: 10px; border: 1px solid #00ffcc; text-align: center; font-size: 1.3rem; margin-bottom: 20px; }
+    h1 { font-family: 'Orbitron', sans-serif; font-size: 3.2rem !important; color: #00ffcc !important; text-align: center; text-shadow: 0 0 15px #00ffcc; margin-top: -20px; }
+    .stDataFrame div { font-size: 1.6rem !important; font-weight: 700 !important; }
+    .ticker-tape { background: rgba(0, 255, 204, 0.1); padding: 12px; border-radius: 10px; border: 1px solid #00ffcc; text-align: center; font-size: 1.4rem; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. إدارة التنبيهات الذكية ---
+# --- 2. إدارة التنبيهات (قاعدة الـ 5% ومرة واحدة) ---
 TOKEN = st.secrets.get("TELEGRAM_TOKEN", "")
 CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
@@ -34,88 +34,99 @@ def send_telegram_msg(message):
             requests.post(url, data=payload, timeout=10)
         except: pass
 
-# --- 3. محرك الزخم والنشاط (النسخة المطورة) ---
-st_autorefresh(interval=60 * 1000, key="v15_refresh")
+# --- 3. محرك الأفضلية والنشاط ---
+st_autorefresh(interval=60 * 1000, key="v15_1_refresh")
 
-def run_pro_momentum_engine():
+def run_priority_momentum_engine():
     try:
-        # 1. جلب قائمة أكبر للأسهم لضمان عدم خلو الرادار
+        # جلب القائمة وتوسيع النطاق لضمان توفر البيانات
         df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
-        # تصفية الأسهم التي تمتلك حجم تداول معقول (أكثر من 500 ألف سهم)
         active_pool = df_raw[df_raw['Volume'] > 500000]
         watchlist = active_pool.sort_values(by='Volume', ascending=False).head(60)
         symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
         
-        data = yf.download(symbols, period="3d", interval="15m", group_by='ticker', progress=False)
+        # استخدام فاصل زمني 15 دقيقة لرصد "النشاط اللحظي" بدقة
+        data = yf.download(symbols, period="2d", interval="15m", group_by='ticker', progress=False)
         
         results = []
         for ticker in symbols:
             if ticker not in data or data[ticker].empty: continue
             df_t = data[ticker].dropna()
-            if len(df_t) < 5: continue
+            if len(df_t) < 10: continue
             
             price = df_t['Close'].iloc[-1]
-            # حساب التغير في آخر 4 ساعات (الزخم اللحظي)
-            momentum_change = ((price - df_t['Close'].iloc[-4]) / df_t['Close'].iloc[-4]) * 100
-            # التغير اليومي
+            # زخم الـ 60 دقيقة الأخيرة
+            momentum_1h = ((price - df_t['Close'].iloc[-4]) / df_t['Close'].iloc[-4]) * 100
+            # التغيير من بداية اليوم
             daily_change = ((price - df_t['Open'].iloc[0]) / df_t['Open'].iloc[0]) * 100
             
-            # حساب السيولة النسبية (Relative Volume)
+            # السيولة اللحظية النسبية
             vol_now = df_t['Volume'].iloc[-1]
             vol_avg = df_t['Volume'].mean()
             rel_vol = vol_now / vol_avg
             
-            # --- معادلة قوة الزخم الجديدة (تطارد الارتفاع والسيولة) ---
-            # إذا كان السهم يرتفع وبسيولة عالية، يحصل على درجة مرتفعة جداً
-            momentum_score = (momentum_change * 5) + (rel_vol * 15) + (daily_change * 2)
-            momentum_score = min(max(momentum_score, 0), 100)
+            # --- معادلة "رادار الأفضلية" (تركز على الصعود والسيولة) ---
+            # تعطي الأولوية للسهم الذي يرتفع الآن وبسيولة ضخمة
+            priority_score = (momentum_1h * 40) + (rel_vol * 30) + (daily_change * 10)
+            priority_score = min(max(priority_score, 0), 99.9)
 
-            # منطق التنبيه (تنبيه واحد + قاعدة الـ 5%)
+            # --- إدارة التنبيهات الذكية ---
             last_price = st.session_state.alert_prices.get(ticker)
             should_alert = False
             
-            if momentum_score > 75 and last_price is None:
+            if priority_score > 70 and last_price is None:
                 should_alert = True
-                reason = "🚀 اختراق وزخم شرائي!"
+                reason = "🚀 اختراق وزخم شرائي"
             elif last_price is not None:
                 p_diff = abs((price - last_price) / last_price) * 100
                 if p_diff >= 5.0:
                     should_alert = True
-                    reason = "⚠️ تحرك سعري كبير (>5%)"
+                    reason = f"⚠️ تحرك سعري كبير ({p_diff:.1f}%)"
 
             if should_alert:
-                send_telegram_msg(f"🎯 *إشارة نشاط: #{ticker}*\nالسبب: {reason}\nالسعر: ${price:.2f}\nالزخم: {momentum_score:.1f}%")
+                msg = (f"🎯 *إشارة أولوية: #{ticker}*\n"
+                       f"الحالة: {reason}\n"
+                       f"السعر: ${price:.2f}\n"
+                       f"قوة الأفضلية: {priority_score:.1f}%")
+                send_telegram_msg(msg)
                 st.session_state.alert_prices[ticker] = price
 
-            # فلترة العرض: لا تظهر إلا الأسهم التي تتحرك فعلياً (زخم > 10%)
-            if momentum_score > 10:
+            # إضافة الأسهم التي تمتلك "حياة" أو نشاطاً فقط
+            if priority_score > 5:
                 results.append({
                     "الرمز": ticker,
                     "السعر": f"${price:.2f}",
-                    "قوة الزخم %": round(momentum_score, 1),
-                    "التغير اللحظي": f"{momentum_change:+.2f}%",
-                    "الحالة": "🔥 انفجار سعري" if momentum_score > 80 else "📈 صعود نشط" if momentum_change > 0 else "👀 مراقبة",
+                    "قوة الأفضلية %": round(priority_score, 1),
+                    "الزخم (ساعة)": f"{momentum_1h:+.2f}%",
+                    "الحالة": "🔥 انفجار سيولة" if priority_score > 80 else "📈 صعود نشط" if momentum_1h > 0 else "👀 مراقبة",
                     "السيولة": f"{rel_vol:.1f}x"
                 })
         
-        return pd.DataFrame(results).sort_values(by="قوة الزخم %", ascending=False)
+        # الترتيب بالأفضلية (الأعلى في الأعلى)
+        return pd.DataFrame(results).sort_values(by="قوة الأفضلية %", ascending=False)
     except: return pd.DataFrame()
 
-# --- 4. واجهة العرض ---
-st.title("🏹 رادار الزخم واقتناص السيولة")
+# --- 4. العرض النهائي ---
+st.title("🛰️ رادار الأفضلية والزخم الفائق")
 
 st.markdown("""
 <div class="ticker-tape">
-    ⚡ الرادار يركز الآن على الأسهم التي "ترتفع بقوة" وبسيولة عالية | التنبيهات ذكية (قاعدة الـ 5%)
+    📡 الرادار يرتب الأسهم حسب (الزخم اللحظي + انفجار السيولة) | التنبيهات مبرمجة على قاعدة الـ 5%
 </div>
 """, unsafe_allow_html=True)
 
-df_mom = run_pro_momentum_engine()
+df_priority = run_priority_momentum_engine()
 
-if not df_mom.empty:
+if not df_priority.empty:
+    def style_rows(val):
+        if "🔥" in str(val): color = '#00ffcc'
+        elif "📈" in str(val): color = '#00e5ff'
+        else: color = '#ffcc00'
+        return f'color: {color}; font-weight: bold;'
+
     st.dataframe(
-        df_mom.style.applymap(lambda x: 'color: #00ffcc; font-weight: bold;' if '🔥' in str(x) or '📈' in str(x) else 'color: #ffcc00;', subset=['الحالة']),
+        df_priority.style.applymap(style_rows, subset=['الحالة']),
         use_container_width=True, hide_index=True, height=850
     )
 else:
-    st.info("🔎 بانتظار رصد تحركات سعرية قوية في السوق...")
+    st.info("🔎 الرادار يمسح السوق الآن بحثاً عن أسهم تدخل في موجة صعود... يرجى الانتظار")
