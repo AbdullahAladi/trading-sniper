@@ -6,8 +6,8 @@ from datetime import datetime
 import requests
 from streamlit_autorefresh import st_autorefresh
 
-# --- 1. الهوية البصرية (تصميم غرفة العمليات) ---
-st.set_page_config(page_title="رادار الأفضلية والزخم", layout="wide")
+# --- 1. الهوية البصرية ---
+st.set_page_config(page_title="رادار الأفضلية - التداول المستمر", layout="wide")
 
 st.markdown("""
     <style>
@@ -19,7 +19,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. إدارة التنبيهات (قاعدة الـ 5% ومرة واحدة) ---
+# --- 2. إدارة التنبيهات الذكية ---
 TOKEN = st.secrets.get("TELEGRAM_TOKEN", "")
 CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
 
@@ -34,99 +34,89 @@ def send_telegram_msg(message):
             requests.post(url, data=payload, timeout=10)
         except: pass
 
-# --- 3. محرك الأفضلية والنشاط ---
-st_autorefresh(interval=60 * 1000, key="v15_1_refresh")
+# --- 3. محرك الأفضلية والسعر المباشر (24/5) ---
+st_autorefresh(interval=60 * 1000, key="v15_2_refresh")
 
-def run_priority_momentum_engine():
+def run_live_priority_engine():
     try:
-        # جلب القائمة وتوسيع النطاق لضمان توفر البيانات
         df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
+        # تصفية الأسهم النشطة
         active_pool = df_raw[df_raw['Volume'] > 500000]
         watchlist = active_pool.sort_values(by='Volume', ascending=False).head(60)
         symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
         
-        # استخدام فاصل زمني 15 دقيقة لرصد "النشاط اللحظي" بدقة
-        data = yf.download(symbols, period="2d", interval="15m", group_by='ticker', progress=False)
+        # جلب البيانات مع تفعيل التداول المسبق واللاحق (include_postpre=True)
+        data = yf.download(symbols, period="2d", interval="15m", group_by='ticker', progress=False, include_postpre=True)
         
         results = []
         for ticker in symbols:
             if ticker not in data or data[ticker].empty: continue
             df_t = data[ticker].dropna()
-            if len(df_t) < 10: continue
+            if len(df_t) < 5: continue
             
-            price = df_t['Close'].iloc[-1]
-            # زخم الـ 60 دقيقة الأخيرة
-            momentum_1h = ((price - df_t['Close'].iloc[-4]) / df_t['Close'].iloc[-4]) * 100
-            # التغيير من بداية اليوم
-            daily_change = ((price - df_t['Open'].iloc[0]) / df_t['Open'].iloc[0]) * 100
+            # --- جلب السعر المباشر بدقة ---
+            # نأخذ آخر سعر متاح سواء كان في السوق النظامي أو التداول الملحق
+            live_price = df_t['Close'].iloc[-1]
             
-            # السيولة اللحظية النسبية
+            # حساب الزخم اللحظي (آخر ساعة تداول متاحة)
+            momentum_1h = ((live_price - df_t['Close'].iloc[-4]) / df_t['Close'].iloc[-4]) * 100
+            # التغير اليومي الفعلي (مقارنة بفتح السوق)
+            daily_change = ((live_price - df_t['Open'].iloc[0]) / df_t['Open'].iloc[0]) * 100
+            
+            # السيولة النسبية
             vol_now = df_t['Volume'].iloc[-1]
             vol_avg = df_t['Volume'].mean()
             rel_vol = vol_now / vol_avg
             
-            # --- معادلة "رادار الأفضلية" (تركز على الصعود والسيولة) ---
-            # تعطي الأولوية للسهم الذي يرتفع الآن وبسيولة ضخمة
+            # معادلة الأفضلية المطورة
             priority_score = (momentum_1h * 40) + (rel_vol * 30) + (daily_change * 10)
             priority_score = min(max(priority_score, 0), 99.9)
 
-            # --- إدارة التنبيهات الذكية ---
+            # التنبيهات الذكية (بناءً على السعر الحي)
             last_price = st.session_state.alert_prices.get(ticker)
             should_alert = False
             
             if priority_score > 70 and last_price is None:
                 should_alert = True
-                reason = "🚀 اختراق وزخم شرائي"
+                reason = "🚀 زخم شرائي مباشر"
             elif last_price is not None:
-                p_diff = abs((price - last_price) / last_price) * 100
+                p_diff = abs((live_price - last_price) / last_price) * 100
                 if p_diff >= 5.0:
                     should_alert = True
-                    reason = f"⚠️ تحرك سعري كبير ({p_diff:.1f}%)"
+                    reason = f"⚠️ تحرك حي مفاجئ ({p_diff:.1f}%)"
 
             if should_alert:
-                msg = (f"🎯 *إشارة أولوية: #{ticker}*\n"
-                       f"الحالة: {reason}\n"
-                       f"السعر: ${price:.2f}\n"
-                       f"قوة الأفضلية: {priority_score:.1f}%")
-                send_telegram_msg(msg)
-                st.session_state.alert_prices[ticker] = price
+                send_telegram_msg(f"🎯 *تنبيه مباشر: #{ticker}*\nالحالة: {reason}\nالسعر الحالي: ${live_price:.2f}\nالزخم: {priority_score:.1f}%")
+                st.session_state.alert_prices[ticker] = live_price
 
-            # إضافة الأسهم التي تمتلك "حياة" أو نشاطاً فقط
             if priority_score > 5:
                 results.append({
                     "الرمز": ticker,
-                    "السعر": f"${price:.2f}",
+                    "السعر الحي": f"${live_price:.2f}",
                     "قوة الأفضلية %": round(priority_score, 1),
-                    "الزخم (ساعة)": f"{momentum_1h:+.2f}%",
-                    "الحالة": "🔥 انفجار سيولة" if priority_score > 80 else "📈 صعود نشط" if momentum_1h > 0 else "👀 مراقبة",
+                    "الزخم (1h)": f"{momentum_1h:+.2f}%",
+                    "الحالة": "🔥 انفجار حي" if priority_score > 80 else "📈 نشاط مستمر" if momentum_1h > 0 else "👀 مراقبة",
                     "السيولة": f"{rel_vol:.1f}x"
                 })
         
-        # الترتيب بالأفضلية (الأعلى في الأعلى)
         return pd.DataFrame(results).sort_values(by="قوة الأفضلية %", ascending=False)
     except: return pd.DataFrame()
 
-# --- 4. العرض النهائي ---
-st.title("🛰️ رادار الأفضلية والزخم الفائق")
+# --- 4. العرض ---
+st.title("🛰️ رادار الأفضلية والسعر المباشر")
 
 st.markdown("""
 <div class="ticker-tape">
-    📡 الرادار يرتب الأسهم حسب (الزخم اللحظي + انفجار السيولة) | التنبيهات مبرمجة على قاعدة الـ 5%
+    📡 الرادار يراقب الآن التداول (المباشر، المسبق، واللاحق) | تحديث تلقائي للأسعار والزخم كل دقيقة
 </div>
 """, unsafe_allow_html=True)
 
-df_priority = run_priority_momentum_engine()
+df_live = run_live_priority_engine()
 
-if not df_priority.empty:
-    def style_rows(val):
-        if "🔥" in str(val): color = '#00ffcc'
-        elif "📈" in str(val): color = '#00e5ff'
-        else: color = '#ffcc00'
-        return f'color: {color}; font-weight: bold;'
-
+if not df_live.empty:
     st.dataframe(
-        df_priority.style.applymap(style_rows, subset=['الحالة']),
+        df_live.style.applymap(lambda x: 'color: #00ffcc; font-weight: bold;' if '🔥' in str(x) or '📈' in str(x) else 'color: #ffcc00;', subset=['الحالة']),
         use_container_width=True, hide_index=True, height=850
     )
 else:
-    st.info("🔎 الرادار يمسح السوق الآن بحثاً عن أسهم تدخل في موجة صعود... يرجى الانتظار")
+    st.info("🔎 الرادار يمسح السوق الآن بحثاً عن أسعار مباشرة... يرجى الانتظار")
