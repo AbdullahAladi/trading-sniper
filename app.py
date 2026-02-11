@@ -8,7 +8,7 @@ import io
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. الهوية البصرية الملكية ---
-st.set_page_config(page_title="🛰️ رادار النخبة V36 - الأهداف الذكية", layout="wide")
+st.set_page_config(page_title="🛰️ رادار النخبة V36.1 - توصية الفرص", layout="wide")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Inter:wght@400;700&display=swap');
@@ -28,7 +28,7 @@ def send_telegram_strategy(ticker, entry, t1, t2, sl, score):
     TOKEN = st.secrets.get("TELEGRAM_TOKEN", "")
     CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "")
     if TOKEN and CHAT_ID:
-        msg = (f"🎯 *توصية قناص: #{ticker}*\n"
+        msg = (f"🎯 *توصية الفرص: #{ticker}*\n"
                f"━━━━━━━━━━━━━━\n"
                f"💰 دخول: ${entry:.2f}\n"
                f"✅ هدف 1: ${t1:.2f} (+1.5%)\n"
@@ -40,19 +40,18 @@ def send_telegram_strategy(ticker, entry, t1, t2, sl, score):
         except: pass
 
 # --- 3. المحرك الاستراتيجي المطور ---
-st_autorefresh(interval=60 * 1000, key="v36_refresh")
+st_autorefresh(interval=60 * 1000, key="v36_1_refresh")
 tab1, tab2 = st.tabs(["🛰️ رادار الأهداف الذكية", "📊 سجل العمليات"])
 
 with tab1:
-    st.title("🛰️ رادار النخبة V36")
-    st.markdown('<div class="ticker-tape">📡 تم إصلاح تداخل الأهداف | الحد الأدنى للربح 1.5% مفعل آلياً</div>', unsafe_allow_html=True)
+    st.title("🛰️ رادار النخبة V36.1")
+    st.markdown('<div class="ticker-tape">📡 نظام "توصية الفرص" نشط | تم تأمين فارق الأهداف بنسبة 1.5% كحد أدنى</div>', unsafe_allow_html=True)
 
     try:
         df_raw = pd.read_csv('nasdaq_screener_1770731394680.csv')
         watchlist = df_raw[df_raw['Volume'] > 500000].sort_values(by='Volume', ascending=False).head(40)
         symbols = [str(s).replace('.', '-').strip() for s in watchlist['Symbol']]
         
-        # جلب البيانات بنظام الجماعي السريع
         all_data = yf.download(symbols, period="2d", interval="1m", group_by='ticker', progress=False, prepost=True, threads=True)
         
         results = []
@@ -65,21 +64,18 @@ with tab1:
             daily_high = df_t['High'].max()
             
             # --- نظام الأهداف الذكي (حل مشكلة التطابق) ---
-            # نستخدم 1.5% كحد أدنى فوق سعر الدخول أو أعلى سعر يومي
-            base_target = max(live_p, daily_high)
-            target1 = base_target * 1.015
-            target2 = base_target * 1.030
-            stop_loss = live_p * 0.97 # وقف خسارة ثابت عند 3%
+            # نستخدم 1.5% كحد أدنى فوق السعر الحالي أو أعلى سعر يومي لضمان الربحية
+            base_reference = max(live_p, daily_high)
+            target1 = base_reference * 1.015
+            target2 = base_reference * 1.030
+            stop_loss = live_p * 0.97 # وقف عند 3%
             
-            # المؤشرات التقنية
             rel_vol = df_t['Volume'].iloc[-1] / (df_t['Volume'].mean() + 1)
             mom_15m = ((live_p - df_t['Close'].iloc[-15]) / df_t['Close'].iloc[-15]) * 100 if len(df_t) >= 15 else 0
             
-            # حساب قوة الأفضلية
             priority_score = (mom_15m * 50) + (rel_vol * 50)
             priority_score = min(max(priority_score, 0), 99.9)
 
-            # التنبيهات الاستراتيجية
             last_p = st.session_state.alert_prices.get(ticker)
             if priority_score >= 85 and last_p is None:
                 send_telegram_strategy(ticker, live_p, target1, target2, stop_loss, priority_score)
@@ -91,7 +87,7 @@ with tab1:
                 "الرمز": ticker, 
                 "السعر⚡": f"${live_p:.2f}",
                 "الأفضلية %": round(priority_score, 1),
-                "الهدف 🎯": f"${target1:.2f}",
+                "الهدف 1 🎯": f"${target1:.2f}",
                 "الهدف 2 🚀": f"${target2:.2f}",
                 "الوقف 🛑": f"${stop_loss:.2f}",
                 "الحالة": "🔥 انفجار" if priority_score > 80 else "📈 مراقبة"
@@ -101,9 +97,9 @@ with tab1:
         st.dataframe(df_final, use_container_width=True, hide_index=True, height=750)
             
     except:
-        st.info("🔎 الرادار يعيد حساب المسافات السعرية للأهداف... يرجى الانتظار")
+        st.info("🔎 جاري تحديث رادار الفرص وحساب المستويات الاستراتيجية...")
 
 with tab2:
-    st.header("📊 سجل الصفقات الذكية")
+    st.header("📊 سجل توصيات الفرص")
     if not st.session_state.performance_log.empty:
         st.table(st.session_state.performance_log)
