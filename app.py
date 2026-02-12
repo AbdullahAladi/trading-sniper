@@ -2,19 +2,20 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
+import plotly.graph_objects as go
 import requests
 from datetime import datetime
 
-# --- الإعدادات ---
-st.set_page_config(page_title="رادار النخبة المباشر", layout="wide")
-st.title("🛰️ رادار النخبة - مسح السوق اللحظي")
+# --- إعدادات المنصة ---
+st.set_page_config(page_title="رادار النخبة 24/7", layout="wide")
+st.title("🏹 رادار قناص السيولة (يدعم التداول الليلي وما قبل الافتتاح)")
 
-# جلب المفاتيح من السيكرتس
+# التحقق من المفاتيح
 try:
     TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
     CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 except:
-    st.error("⚠️ يرجى التأكد من ضبط TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID في Secrets")
+    st.error("⚠️ يرجى ضبط TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID في Secrets")
     st.stop()
 
 def send_telegram(msg):
@@ -22,64 +23,64 @@ def send_telegram(msg):
     try: requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=5)
     except: pass
 
-# --- وظيفة جلب الأسهم الأكثر نشاطاً ---
-def get_active_stocks():
-    # نستخدم قائمة واسعة ومباشرة لضمان وجود بيانات
-    tickers = ['AAPL', 'NVDA', 'TSLA', 'AMD', 'MSFT', 'META', 'PLTR', 'SMCI', 'MARA', 'COIN', 
-               'AMZN', 'GOOGL', 'NFLX', 'BRK-B', 'UNH', 'JNJ', 'XOM', 'JPM', 'V', 'PG']
-    return tickers
+# --- محرك رصد الأسهم الأكثر نشاطاً ---
+def get_extended_market_movers():
+    # قائمة بأسهم الزخم العالي التي تتحرك غالباً خارج أوقات العمل الرسمية
+    return ['NVDA', 'TSLA', 'AAPL', 'AMD', 'MSFT', 'META', 'PLTR', 'SMCI', 'MARA', 'COIN', 'RIOT', 'MSTR', 'AMD', 'GOOGL']
 
-# --- محرك التحليل المرن (لضمان ظهور نتائج) ---
-def analyze_stock_flexible(ticker):
+def analyze_extended_market(ticker):
     try:
-        # جلب بيانات 5 أيام بفاصل 15 دقيقة
-        df = yf.download(ticker, period="5d", interval="15m", progress=False)
-        if df.empty or len(df) < 15: return None
+        # الميزة الجوهرية: prepost=True تتيح جلب بيانات التداول خارج ساعات العمل
+        df = yf.download(ticker, period="3d", interval="15m", progress=False, prepost=True)
         
-        # حساب المؤشرات
+        if df.empty or len(df) < 10: return None
+        
+        # حساب المؤشرات الفنية للزحم الحالي
         df['RSI'] = ta.rsi(df['Close'], length=14)
-        df['EMA20'] = ta.ema(df['Close'], length=20)
+        df['EMA10'] = ta.ema(df['Close'], length=10) # متوسط أسرع للمضاربة اللحظية
         
         last = df.iloc[-1]
         
-        # --- شروط مرنة للرصد ---
-        # سنكتفي بأن يكون RSI فوق 50 والسعر فوق المتوسط لضمان ظهور الأسهم الصاعدة حالياً
-        if float(last['RSI']) > 50 and float(last['Close']) > float(last['EMA20']):
+        # شرط الرصد (مرن جداً لضمان التقاط الحركة في هذه اللحظة)
+        if float(last['RSI']) > 50 and float(last['Close']) > float(last['EMA10']):
             return {
                 "Ticker": ticker,
                 "Price": round(float(last['Close']), 2),
                 "RSI": round(float(last['RSI']), 1),
-                "Signal": "📈 صعود مستقر" if last['RSI'] < 65 else "🔥 زخم عالي"
+                "Status": "🔥 زخم صاعد" if last['RSI'] > 60 else "✅ بداية صعود"
             }
     except:
         return None
 
-# --- الواجهة ---
-if 'results' not in st.session_state:
-    st.session_state.results = []
+# --- واجهة التحكم ---
+if 'live_hits' not in st.session_state:
+    st.session_state.live_hits = []
 
-col1, col2 = st.columns([1, 1])
-with col1:
-    if st.button("🔍 ابدأ مسح النشاط الآن", use_container_width=True):
-        st.session_state.results = [] # تفريغ النتائج السابقة
-        tickers = get_active_stocks()
-        st.write(f"جاري فحص {len(tickers)} سهم نشط...")
+st.info(f"الوقت الحالي (GMT): {datetime.utcnow().strftime('%H:%M')} | الرادار يراقب التداول الليلي الآن.")
+
+col_run, col_clear = st.columns(2)
+with col_run:
+    if st.button("🚀 ابدأ المسح اللحظي (24/7)", use_container_width=True):
+        st.session_state.live_hits = []
+        tickers = get_extended_market_movers()
         
-        for ticker in tickers:
-            res = analyze_stock_flexible(ticker)
-            if res:
-                st.session_state.results.append(res)
-                send_telegram(f"✅ *سهم نشط صاعد:* {ticker}\n💰 السعر: ${res['Price']}\n📈 الزخم: {res['RSI']}")
+        with st.spinner("جاري قنص التحركات اللحظية..."):
+            for ticker in tickers:
+                res = analyze_extended_market(ticker)
+                if res:
+                    st.session_state.live_hits.append(res)
+                    # إرسال تنبيه تليجرام فوراً
+                    send_telegram(f"🔔 *إشارة رادار (خارج السوق):* {ticker}\n💰 السعر الحالي: ${res['Price']}\n📈 قوة الزخم: {res['RSI']}")
 
-with col2:
+with col_clear:
     if st.button("🗑️ مسح النتائج", use_container_width=True):
-        st.session_state.results = []
+        st.session_state.live_hits = []
         st.rerun()
 
-# عرض النتائج
-if st.session_state.results:
-    st.subheader("📊 الأسهم الصاعدة المرصودة حالياً")
-    df_res = pd.DataFrame(st.session_state.results)
-    st.dataframe(df_res, use_container_width=True)
+# عرض النتائج في جدول احترافي
+if st.session_state.live_hits:
+    st.subheader("📋 الأسهم النشطة صعوداً في هذه اللحظة")
+    df_results = pd.DataFrame(st.session_state.live_hits)
+    st.dataframe(df_results, use_container_width=True)
 else:
-    st.info("لا توجد نتائج حالياً. اضغط على 'ابدأ مسح النشاط'. إذا لم تظهر نتائج، تأكد أن السوق الأمريكي مفتوح حالياً.")
+    st.warning("لا توجد أسهم تحقق شروط الصعود حالياً. قد يكون السعر مستقراً في هذه الساعة.")
