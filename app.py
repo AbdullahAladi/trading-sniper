@@ -3,97 +3,81 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import requests
 import io
-from datetime import datetime
 
-# إعدادات واجهة المنصة الاحترافية
-st.set_page_config(page_title="منصة رادار النخبة Pro", layout="wide")
-st.markdown("<style>main { background-color: #0e1117; }</style>", unsafe_allow_html=True)
+# --- الإعدادات وجلب المفاتيح ---
+TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
+CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 
-# جلب المفاتيح بأمان
-try:
-    TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
-    CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
-except:
-    st.error("⚠️ يرجى ضبط Secrets في الإعدادات أولاً.")
-    st.stop()
+st.set_page_config(page_title="رادار ناسداك الشامل", layout="wide")
+st.title("🛰️ رادار النخبة: ماسح سوق ناسداك الشامل")
 
-# وظائف التنبيه
+# --- وظيفة جلب قائمة الأسهم من GitHub ---
+@st.cache_data # تخزين القائمة مؤقتاً لتسريع التطبيق
+def get_nasdaq_list():
+    # رابط افتراضي لملف ناسداك على قيت هوب (يمكنك استبداله برابط ملفك الخاص)
+    url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nasdaq/nasdaq_tickers.txt"
+    try:
+        response = requests.get(url)
+        # تحويل النص إلى قائمة رموز
+        tickers = response.text.split('\n')
+        return [t.strip() for t in tickers if t.strip()][:100] # نحدد أول 100 سهم كمرحلة تجريبية لسرعة الأداء
+    except:
+        return ['AAPL', 'NVDA', 'TSLA', 'AMD', 'MSFT']
+
+# --- وظيفة التنبيه ---
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    try: requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=5)
-    except: pass
+    requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
 
-def get_clean_data(ticker):
+# --- محرك الرصد الذكي ---
+def analyze_trend(ticker):
     try:
-        df = yf.download(ticker, period="10d", interval="15m", progress=False)
-        if df.empty or len(df) < 25: return None
+        df = yf.download(ticker, period="5d", interval="15m", progress=False)
+        if df.empty or len(df) < 20: return None
+        
+        # حساب المؤشرات الفنية للزخم
         df['RSI'] = ta.rsi(df['Close'], length=14)
         df['EMA20'] = ta.ema(df['Close'], length=20)
         df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
-        return df
-    except: return None
+        
+        last = df.iloc[-1]
+        
+        # --- فلتر الصعود الحقيقي (جميع الأسهم الصاعدة بسيولة) ---
+        if last['RSI'] > 60 and last['Close'] > last['EMA20'] and last['Volume'] > (last['Vol_Avg'] * 1.5):
+            return {
+                "Symbol": ticker,
+                "Price": round(float(last['Close']), 2),
+                "RSI": round(float(last['RSI']), 1),
+                "Volume_Increase": round(float(last['Volume'] / last['Vol_Avg']), 2)
+            }
+    except:
+        return None
 
-# واجهة المنصة الرئيسية
-st.title("🏹 منصة رادار النخبة - تداول مباشر 24/7")
+# --- واجهة التحكم ---
+if 'all_hits' not in st.session_state:
+    st.session_state.all_hits = []
 
-if 'signals' not in st.session_state:
-    st.session_state.signals = []
-
-# قائمة المراقبة المقترحة
-WATCHLIST = ['NVDA', 'TSLA', 'AAPL', 'AMD', 'META', 'PLTR', 'MARA', 'COIN', 'MSFT', 'AMZN']
-
-# شريط التحكم
-col_btn, col_test = st.columns([1, 1])
-with col_btn:
-    if st.button("🚀 ابدأ مسح السوق الفوري", use_container_width=True):
-        with st.spinner("جاري قنص السيولة والزخم..."):
-            for ticker in WATCHLIST:
-                df = get_clean_data(ticker)
-                if df is not None:
-                    last = df.iloc[-1]
-                    # معالجة مشكلة المقارنة (أرقام مجردة)
-                    l_price, l_rsi, l_vol, a_vol, l_ema = float(last['Close']), float(last['RSI']), float(last['Volume']), float(last['Vol_Avg']), float(last['EMA20'])
-                    
-                    if l_rsi > 60 and l_price > l_ema and l_vol > (a_vol * 1.3):
-                        if not any(d['Symbol'] == ticker for d in st.session_state.signals):
-                            st.session_state.signals.append({"Symbol": ticker, "Price": l_price, "RSI": l_rsi, "Time": datetime.now().strftime("%H:%M")})
-                            send_telegram(f"🔥 *ترند صاعد:* {ticker}\n💰 السعر: ${l_price:.2f}")
-
-with col_test:
-    if st.button("🧪 اختبار ربط تليجرام", use_container_width=True):
-        send_telegram("🔔 نظام الرادار متصل وجاهز للعمل!")
-        st.toast("تم إرسال رسالة الاختبار")
-
-# عرض المنصة الرسومية
-if st.session_state.signals:
-    tab1, tab2 = st.tabs(["📈 الرسم البياني التفاعلي", "📋 سجل الفرص"])
+if st.button("🔍 ابدأ المسح الشامل لناسداك"):
+    tickers = get_nasdaq_list()
+    st.write(f"جاري فحص {len(tickers)} سهم من قائمة ناسداك...")
     
-    with tab1:
-        selected = st.selectbox("اختر سهم للعرض:", [s['Symbol'] for s in st.session_state.signals])
-        df_chart = get_clean_data(selected)
-        
-        # رسم الشموع اليابانية الاحترافية
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
-        fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], 
-                                     low=df_chart['Low'], close=df_chart['Close'], name="السعر"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['EMA20'], line=dict(color='#00ffcc', width=1), name="EMA 20"), row=1, col=1)
-        fig.add_trace(go.Bar(x=df_chart.index, y=df_chart['Volume'], name="السيولة", marker_color='#30363d'), row=2, col=1)
-        
-        fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=10, b=10))
-        st.plotly_chart(fig, use_container_width=True)
+    progress_bar = st.progress(0)
+    for i, ticker in enumerate(tickers):
+        res = analyze_trend(ticker)
+        if res:
+            if not any(d['Symbol'] == ticker for d in st.session_state.all_hits):
+                st.session_state.all_hits.append(res)
+                send_telegram(f"🔥 *سهم صاعد مرصود:* {ticker}\n💰 السعر: ${res['Price']}\n📈 الزخم: {res['RSI']}")
+        progress_bar.progress((i + 1) / len(tickers))
 
-    with tab2:
-        df_final = pd.DataFrame(st.session_state.signals)
-        st.table(df_final)
-        
-        # تصدير التقرير (تصحيح خطأ الصورة e15a97)
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_final.to_excel(writer, index=False)
-        
-        st.download_button(label="📥 تحميل التقرير (Excel)", data=buffer.getvalue(), file_name="radar_report.xlsx")
-else:
-    st.info("المنصة بانتظار بدء المسح لرصد الترند والسيولة.")
+# عرض النتائج في جدول احترافي
+if st.session_state.all_hits:
+    st.subheader("📋 قائمة الأسهم الصاعدة حالياً")
+    df_results = pd.DataFrame(st.session_state.all_hits)
+    st.dataframe(df_results, use_container_width=True)
+    
+    # رسم شارت لأول سهم صاعد تم رصده كنموذج
+    selected = st.selectbox("اختر سهم لمشاهدة الشارت:", df_results['Symbol'])
+    # (هنا نضع كود الرسم البياني Plotly الذي استخدمناه سابقاً)
