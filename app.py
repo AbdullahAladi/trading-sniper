@@ -8,106 +8,87 @@ import requests
 import io
 from datetime import datetime
 
-# --- 1. الإعدادات الأساسية ---
-st.set_page_config(page_title="منصة رادار النخبة", layout="wide", initial_sidebar_state="collapsed")
+# --- إعدادات المظهر الاحترافي ---
+st.set_page_config(page_title="منصة رادار النخبة Pro", layout="wide")
 
-# استدعاء التوكن من Secrets
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div[data-testid="stMetricValue"] { font-size: 24px; color: #00ffcc; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- التحقق من الربط ---
 try:
     TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
     CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 except:
-    st.error("⚠️ يرجى ضبط مفاتيح التليجرام في Secrets")
+    st.error("⚠️ يرجى ضبط Secrets في الإعدادات أولاً.")
     st.stop()
 
-# تحسين المظهر العام (Dark Mode)
-st.markdown("""
-    <style>
-    .main { background-color: #0e1117; }
-    .stMetric { background-color: #161b22; border-radius: 10px; padding: 15px; border: 1px solid #30363d; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 2. الوظائف المساندة ---
-def play_sound():
-    audio_html = """<audio autoplay><source src="https://www.soundjay.com/buttons/beep-01a.mp3" type="audio/mpeg"></audio>"""
-    st.markdown(audio_html, unsafe_allow_html=True)
-
+# --- وظائف النظام ---
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+    try: requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=5)
+    except: pass
 
-# --- 3. محرك الرصد والتحليل الفني ---
-WATCHLIST = ['AAPL', 'NVDA', 'TSLA', 'AMD', 'MSFT', 'META', 'PLTR', 'SMCI', 'MARA', 'COIN']
+def get_data(ticker):
+    try:
+        df = yf.download(ticker, period="10d", interval="15m", progress=False)
+        if df.empty or len(df) < 20: return None
+        df['RSI'] = ta.rsi(df['Close'], length=14)
+        df['EMA20'] = ta.ema(df['Close'], length=20)
+        df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
+        return df
+    except: return None
 
-def get_live_data(ticker):
-    # جلب بيانات 15 دقيقة لرصد الترند الحالي
-    data = yf.download(ticker, period="5d", interval="15m", progress=False)
-    if data.empty: return None
-    
-    # حساب المؤشرات
-    data['RSI'] = ta.rsi(data['Close'], length=14)
-    data['EMA20'] = ta.ema(data['Close'], length=20)
-    data['EMA50'] = ta.ema(data['Close'], length=50)
-    data['Vol_Avg'] = data['Volume'].rolling(window=20).mean()
-    return data
+# --- واجهة المنصة ---
+st.title("🏹 منصة رادار النخبة - تداول مباشر")
 
-# --- 4. واجهة المنصة الحقيقية ---
-st.title("📊 منصة رادار النخبة - بث مباشر للترند")
+if 'signals' not in st.session_state:
+    st.session_state.signals = []
 
-if 'history' not in st.session_state:
-    st.session_state.history = []
+# قائمة المراقبة
+WATCHLIST = ['NVDA', 'TSLA', 'AAPL', 'AMD', 'META', 'PLTR', 'MARA', 'COIN', 'MSFT', 'AMZN']
 
-col_ctrl, col_status = st.columns([1, 4])
-with col_ctrl:
-    btn_scan = st.button("🚀 ابدأ المسح اللحظي", use_container_width=True)
-
-if btn_scan:
-    with st.spinner("جاري تحليل السيولة..."):
+# زر المسح العلوي
+if st.button("🚀 ابدأ مسح السوق الفوري", use_container_width=True):
+    with st.spinner("جاري قنص السيولة والزخم..."):
         for ticker in WATCHLIST:
-            df = get_live_data(ticker)
-            if df is None: continue
-            
-            last = df.iloc[-1]
-            # شروط الترند القوي
-            is_bullish = last['RSI'] > 60 and last['Close'] > last['EMA20'] and last['Volume'] > (last['Vol_Avg'] * 1.3)
-            
-            if is_bullish:
-                # تحديث السجل والتنبيه
-                if not any(d['Symbol'] == ticker for d in st.session_state.history):
-                    st.session_state.history.append({"Symbol": ticker, "Price": last['Close'], "RSI": last['RSI']})
-                    send_telegram(f"🔥 *ترند صاعد مرصود:* {ticker} \n💰 السعر: {last['Close']:.2f}")
-                    play_sound()
+            df = get_data(ticker)
+            if df is not None:
+                last = df.iloc[-1]
+                # شرط الترند القوي (زخم + سيولة + سعر فوق المتوسط)
+                if last['RSI'] > 60 and last['Close'] > last['EMA20'] and last['Volume'] > (last['Vol_Avg'] * 1.3):
+                    if not any(d['Symbol'] == ticker for d in st.session_state.signals):
+                        entry = {"Symbol": ticker, "Price": last['Close'], "RSI": last['RSI'], "Time": datetime.now().strftime("%H:%M")}
+                        st.session_state.signals.append(entry)
+                        send_telegram(f"🔥 *إشارة ترند صاعد:* {ticker}\n💰 السعر: ${last['Close']:.2f}\n📊 الزخم: {last['RSI']:.1f}")
 
-# عرض الشاشة الرئيسية (Charts)
-if st.session_state.history:
-    selected_symbol = st.selectbox("اختر سهم من الرادار لعرض شاشة التداول:", [d['Symbol'] for d in st.session_state.history])
+# عرض الرسم البياني الاحترافي
+if st.session_state.signals:
+    cols = st.columns([1, 3])
+    with cols[0]:
+        st.subheader("🎯 الفرص المرصودة")
+        df_display = pd.DataFrame(st.session_state.signals)
+        selected_symbol = st.selectbox("اختر سهم للعرض:", df_display['Symbol'])
     
-    df_plot = get_live_data(selected_symbol)
-    
-    # رسم المنصة الاحترافية
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
-    
-    # الشموع اليابانية
-    fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], 
-                                 low=df_plot['Low'], close=df_plot['Close'], name="السعر"), row=1, col=1)
-    
-    # المتوسطات المتحركة
-    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['EMA20'], line=dict(color='yellow', width=1), name="EMA 20"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['EMA50'], line=dict(color='cyan', width=1), name="EMA 50"), row=1, col=1)
-    
-    # الحجم (Volume)
-    fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name="السيولة", marker_color='rgba(100, 200, 100, 0.5)'), row=2, col=1)
+    with cols[1]:
+        df_chart = get_data(selected_symbol)
+        # رسم الشموع اليابانية
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+        fig.add_trace(go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], 
+                                     low=df_chart['Low'], close=df_chart['Close'], name="Price"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['EMA20'], line=dict(color='#00ffcc', width=1), name="EMA 20"), row=1, col=1)
+        fig.add_trace(go.Bar(x=df_chart.index, y=df_chart['Volume'], name="Volume", marker_color='#30363d'), row=2, col=1)
+        
+        fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig, use_container_width=True)
 
-    fig.update_layout(height=600, template="plotly_dark", xaxis_rangeslider_visible=False, 
-                      margin=dict(l=10, r=10, t=10, b=10))
-    st.plotly_chart(fig, use_container_width=True)
-
-    # عرض ملخص البيانات أسفل الشاشة
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("السهم الحالي", selected_symbol)
-    c2.metric("السعر اللحظي", f"${df_plot['Close'].iloc[-1]:.2f}")
-    c3.metric("قوة النسبية RSI", f"{df_plot['RSI'].iloc[-1]:.1f}")
-    c4.metric("حالة الترند", "🔥 صاعد قوي" if df_plot['RSI'].iloc[-1] > 60 else "⚖️ مستقر")
-
+    # عرض عدادات القوة
+    m1, m2, m3 = st.columns(3)
+    m1.metric("السعر الحالي", f"${df_chart['Close'].iloc[-1]:.2f}")
+    m2.metric("قوة الزخم RSI", f"{df_chart['RSI'].iloc[-1]:.1f}")
+    m3.metric("حالة السيولة", "🔥 انفجارية" if df_chart['Volume'].iloc[-1] > df_chart['Vol_Avg'].iloc[-1] else "⚖️ طبيعية")
 else:
-    st.info("اضغط على 'ابدأ المسح' لرصد الأسهم التي تخترق الآن. الرادار يراقب الزخم والسيولة 24/7.")
+    st.info("المنصة بانتظار بدء المسح لرصد الترند والسيولة.")
