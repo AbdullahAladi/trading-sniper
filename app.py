@@ -4,80 +4,96 @@ import pandas as pd
 import pandas_ta as ta
 import plotly.graph_objects as go
 import requests
-import io
+from datetime import datetime
 
-# --- الإعدادات وجلب المفاتيح ---
-TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
-CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
+# --- إعدادات الواجهة والربط ---
+st.set_page_config(page_title="رادار النشاط والارتفاع", layout="wide")
+st.title("🚀 رادار النخبة: مسح الأسهم الأكثر نشاطاً وارتفاعاً")
 
-st.set_page_config(page_title="رادار ناسداك الشامل", layout="wide")
-st.title("🛰️ رادار النخبة: ماسح سوق ناسداك الشامل")
+try:
+    TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
+    CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
+except:
+    st.error("⚠️ يرجى ضبط Secrets (TOKEN & ID) أولاً.")
+    st.stop()
 
-# --- وظيفة جلب قائمة الأسهم من GitHub ---
-@st.cache_data # تخزين القائمة مؤقتاً لتسريع التطبيق
-def get_nasdaq_list():
-    # رابط افتراضي لملف ناسداك على قيت هوب (يمكنك استبداله برابط ملفك الخاص)
-    url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nasdaq/nasdaq_tickers.txt"
+# --- وظائف الجلب الذكي ---
+def get_market_movers(type='most_active'):
+    """
+    جلب القوائم من ياهو فايننس تلقائياً
+    أنواع البحث: 'most_active', 'day_gainers'
+    """
     try:
-        response = requests.get(url)
-        # تحويل النص إلى قائمة رموز
-        tickers = response.text.split('\n')
-        return [t.strip() for t in tickers if t.strip()][:100] # نحدد أول 100 سهم كمرحلة تجريبية لسرعة الأداء
+        # استخدام سكرينر ياهو فايننس لجلب الأسهم اللحظية
+        screener = yf.Screener()
+        screener.set_predefined_body(type)
+        results = screener.response['quotes']
+        return [q['symbol'] for q in results]
     except:
-        return ['AAPL', 'NVDA', 'TSLA', 'AMD', 'MSFT']
+        # قائمة احتياطية في حال فشل السكرينر
+        return ['AAPL', 'NVDA', 'TSLA', 'AMD', 'PLTR', 'MARA']
 
-# --- وظيفة التنبيه ---
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
 
-# --- محرك الرصد الذكي ---
-def analyze_trend(ticker):
+# --- محرك التحليل الفني ---
+def analyze_stock(ticker):
     try:
         df = yf.download(ticker, period="5d", interval="15m", progress=False)
         if df.empty or len(df) < 20: return None
         
-        # حساب المؤشرات الفنية للزخم
+        # مؤشرات الزخم والسيولة
         df['RSI'] = ta.rsi(df['Close'], length=14)
         df['EMA20'] = ta.ema(df['Close'], length=20)
         df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
         
         last = df.iloc[-1]
         
-        # --- فلتر الصعود الحقيقي (جميع الأسهم الصاعدة بسيولة) ---
-        if last['RSI'] > 60 and last['Close'] > last['EMA20'] and last['Volume'] > (last['Vol_Avg'] * 1.5):
+        # معايير "القناص": زخم عالي + سيولة انفجارية
+        if float(last['RSI']) > 60 and float(last['Close']) > float(last['EMA20']):
             return {
-                "Symbol": ticker,
+                "Ticker": ticker,
                 "Price": round(float(last['Close']), 2),
                 "RSI": round(float(last['RSI']), 1),
-                "Volume_Increase": round(float(last['Volume'] / last['Vol_Avg']), 2)
+                "Vol_Ratio": round(float(last['Volume'] / last['Vol_Avg']), 2)
             }
     except:
         return None
 
-# --- واجهة التحكم ---
-if 'all_hits' not in st.session_state:
-    st.session_state.all_hits = []
+# --- واجهة المنصة ---
+col1, col2 = st.columns(2)
+with col1:
+    scan_type = st.selectbox("اختر نوع الفحص:", 
+                            ["الأسهم الأكثر نشاطاً (Most Active)", "الأعلى ارتفاعاً اليوم (Day Gainers)"])
+with col2:
+    st.write(" ")
+    start_btn = st.button("🔍 ابدأ مسح السوق الآن", use_container_width=True)
 
-if st.button("🔍 ابدأ المسح الشامل لناسداك"):
-    tickers = get_nasdaq_list()
-    st.write(f"جاري فحص {len(tickers)} سهم من قائمة ناسداك...")
+if 'found_opportunities' not in st.session_state:
+    st.session_state.found_opportunities = []
+
+if start_btn:
+    query_type = 'most_active' if "نشاطاً" in scan_type else 'day_gainers'
+    tickers = get_market_movers(query_type)
     
-    progress_bar = st.progress(0)
-    for i, ticker in enumerate(tickers):
-        res = analyze_trend(ticker)
+    st.write(f"🔎 جاري فحص أفضل {len(tickers)} سهم من ياهو فايننس...")
+    
+    for ticker in tickers:
+        res = analyze_stock(ticker)
         if res:
-            if not any(d['Symbol'] == ticker for d in st.session_state.all_hits):
-                st.session_state.all_hits.append(res)
-                send_telegram(f"🔥 *سهم صاعد مرصود:* {ticker}\n💰 السعر: ${res['Price']}\n📈 الزخم: {res['RSI']}")
-        progress_bar.progress((i + 1) / len(tickers))
+            if not any(d['Ticker'] == ticker for d in st.session_state.found_opportunities):
+                st.session_state.found_opportunities.append(res)
+                send_telegram(f"🔥 *فرصة نشطة:* {ticker}\n💰 السعر: ${res['Price']}\n📈 الزخم: {res['RSI']}\n📊 السيولة: {res['Vol_Ratio']}x")
 
-# عرض النتائج في جدول احترافي
-if st.session_state.all_hits:
-    st.subheader("📋 قائمة الأسهم الصاعدة حالياً")
-    df_results = pd.DataFrame(st.session_state.all_hits)
-    st.dataframe(df_results, use_container_width=True)
+# عرض النتائج في جدول تفاعلي
+if st.session_state.found_opportunities:
+    st.subheader("📋 الفرص المكتشفة بناءً على نشاط السوق")
+    df_results = pd.DataFrame(st.session_state.found_opportunities)
+    st.table(df_results)
     
-    # رسم شارت لأول سهم صاعد تم رصده كنموذج
-    selected = st.selectbox("اختر سهم لمشاهدة الشارت:", df_results['Symbol'])
-    # (هنا نضع كود الرسم البياني Plotly الذي استخدمناه سابقاً)
+    if st.button("🗑️ مسح السجل"):
+        st.session_state.found_opportunities = []
+        st.rerun()
+else:
+    st.info("الرادار جاهز. اختر نوع الفحص واضغط ابدأ.")
